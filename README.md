@@ -1,6 +1,6 @@
-# XrayPulse
+# BLA VPN
 
-A modern **Android Xray client** with a polished Material 3 UI. Built for the latest **Xray-core** features used by [v2rayN](https://github.com/2dust/v2rayN) / [v2rayNG](https://github.com/2dust/v2rayNG):
+A modern **Android Xray client** with Material 3 UI. Supports the same core features used by [v2rayN](https://github.com/2dust/v2rayN) / [v2rayNG](https://github.com/2dust/v2rayNG).
 
 | Protocol | Transports | Security |
 |----------|------------|----------|
@@ -10,26 +10,27 @@ A modern **Android Xray client** with a polished Material 3 UI. Built for the la
 | **Shadowsocks** | TCP | AEAD methods |
 | Custom JSON | full Xray config | — |
 
-### Xray features wired in the config builder
+### Features
 
 - **VLESS + REALITY + Vision** (`flow: xtls-rprx-vision`)
-- **XHTTP** transport (modern successor to SplitHTTP)
-- **uTLS fingerprints** (`chrome`, `firefox`, `safari`, `ios`, `random`, …)
-- **Mux / XUDP**, domain sniffing, DoH DNS
-- Routing: Global · Bypass LAN · Bypass CN (`geoip` / `geosite`)
-- Optional TLS fragment settings (anti-DPI)
-- Share-link import compatible with v2rayN (`vless://`, `vmess://`, `trojan://`, `ss://`, base64 subs)
+- **XHTTP** transport, **uTLS** fingerprints
+- **Mux**, domain sniffing, DoH DNS, FakeDNS
+- Routing: Global · Bypass LAN · custom **direct domains** (wildcards)
+- TLS fragment (anti-DPI)
+- Quick Setup wizard, multi-select servers, subscriptions (traffic / expiry when provided)
+- Session limits, keep-alive, optional **LAN proxy** for other devices
+- Persian (فارسی) default UI + English
+- Share-link import: `vless://`, `vmess://`, `trojan://`, `ss://`, subscription URLs
 
 ---
 
 ## Screens
 
-- **Home** — large connect power button, live stats, server card  
-- **Servers** — search, latency badges, swipe-to-delete  
-- **Import** — paste links, subscription URL, QR scan, manual VLESS form  
-- **Settings** — routing, sniffing, mux, fragment, auto-connect  
-
-UI: deep-space dark theme, glass cards, cyan/violet accents (Jetpack Compose + Material 3).
+- **Home** — connect button, stats, quick test, subscription bars  
+- **Servers** — search, tabs per subscription, multi-select, latency  
+- **Import** — links / multi-line paste, QR, manual VLESS  
+- **Subscriptions** — refresh, rename, traffic / expire  
+- **Settings** — routing, ports, fragment, language, limits, help  
 
 ---
 
@@ -38,57 +39,53 @@ UI: deep-space dark theme, glass cards, cyan/violet accents (Jetpack Compose + M
 ```
 app/src/main/java/com/xraypulse/app/
   core/
-    config/XrayConfigBuilder.kt   # Xray JSON builder
-    parser/ShareLinkParser.kt     # v2rayN-style link parsing
+    config/XrayConfigBuilder.kt
+    parser/ShareLinkParser.kt
     parser/ShareLinkExporter.kt
-    xray/XrayController.kt        # libv2ray / libXray bridge
-  service/XrayVpnService.kt       # Android VpnService
-  data/                           # Room + DataStore
-  ui/                             # Compose screens & theme
+    xray/XrayController.kt
+    vpn/HevTunnel.kt
+  service/XrayVpnService.kt
+  data/
+  ui/
 ```
 
 ---
 
 ## Build
 
-### Quick build (this machine)
+### Requirements
 
-Uses your installed **Android Studio JBR**, **Gradle 8.11.1** cache, and **Android SDK**:
+- JDK 17+
+- Android SDK (API 35 recommended)
+- Gradle (wrapper included)
+
+Create `local.properties` (not committed):
+
+```properties
+sdk.dir=/path/to/Android/Sdk
+```
+
+### Debug APK
+
+```bash
+./gradlew :app:assembleDebug
+```
+
+Output:
+
+```
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+On Windows you can also use:
 
 ```powershell
 .\scripts\build-debug.ps1
 ```
 
-APK output:
+### Link Xray-core (required for real traffic)
 
-```
-app\build\outputs\apk\debug\app-debug.apk
-```
-
-Toolchain pinned to match your other projects / local Gradle cache:
-
-| Tool | Version / path |
-|------|----------------|
-| JDK | Android Studio JBR 21 (or `C:\Program Files\Java\jdk-17.0.2`) |
-| Gradle | 8.11.1 (`%USERPROFILE%\.gradle\wrapper\dists\…`) |
-| AGP | 8.9.2 |
-| Kotlin | 1.9.22 |
-| KSP | 1.9.22-1.0.17 |
-| SDK | `%LOCALAPPDATA%\Android\Sdk` (`local.properties`) |
-
-Maven mirrors: Aliyun Google/public (because `dl.google.com` is unreachable from Java on this network).
-
-### Open in Android Studio
-
-- Open the `G:\grok\app3` folder  
-- Use the embedded JBR / project JDK 17+  
-- Sync Gradle and run **app**  
-
-The UI runs without the native Xray AAR (preview / stub mode).
-
-### 2. Link real Xray-core (required for traffic)
-
-The Go core is shipped as an AAR from [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite) (same stack as v2rayNG):
+Place `libv2ray.aar` from [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite) into `app/libs/`.
 
 **Linux / macOS / WSL**
 
@@ -96,8 +93,6 @@ The Go core is shipped as an AAR from [AndroidLibXrayLite](https://github.com/2d
 chmod +x scripts/build-libxray.sh
 ./scripts/build-libxray.sh
 ```
-
-This produces `app/libs/libv2ray.aar`. Rebuild the app.
 
 **Manual**
 
@@ -107,32 +102,35 @@ cd AndroidLibXrayLite
 gomobile init
 go mod tidy
 gomobile bind -v -androidapi 24 -trimpath -ldflags='-s -w -buildid= -checklinkname=0' ./
-cp libv2ray.aar /path/to/XrayPulse/app/libs/
+cp libv2ray.aar /path/to/this-project/app/libs/
 ```
 
-Optional: download routing databases
+Optional geo databases:
 
-```powershell
+```bash
+# Windows PowerShell
 ./scripts/download-geo.ps1
 ```
 
-### 3. Install
+### Install
 
 ```bash
 ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Release APKs are published under [Releases](https://github.com/davoodtaba-glitch/Bla-Vpn-pulse-/releases).
+
 ---
 
 ## Usage
 
-1. **Import** a `vless://…` link (or subscription).  
-2. Select the server under **Servers**.  
-3. On **Home**, tap the power button and accept the VPN permission.  
-4. Adjust **Settings** (Bypass LAN / CN, mux, sniffing).
+1. **Import** a share link or subscription URL (or use **Quick setup**).  
+2. Select a server under **Servers**.  
+3. On **Home**, tap connect and grant VPN permission.  
+4. Configure **Settings** as needed (routing, fragment, ports, language).
 
-Example VLESS + REALITY share link shape:
+Example VLESS + REALITY link:
 
 ```
 vless://UUID@host:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.com&fp=chrome&pbk=PUBLIC_KEY&sid=SHORT_ID&type=tcp#MyServer
@@ -142,25 +140,171 @@ vless://UUID@host:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni
 
 ## Architecture notes
 
-- **Config generation** follows current Xray JSON (`realitySettings`, `xhttpSettings`, Vision flow, hybrid domain matcher).  
-- **XrayController** uses reflection so the project compiles without the AAR; once `libv2ray.aar` is present, the real core is used.  
-- **VPN path** creates a TUN interface (`VpnService`) and starts Xray with local SOCKS/HTTP inbounds. For production-grade packet bridging, integrate [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) the same way v2rayNG does (JNI redirect from TUN → SOCKS).  
-- Protocols and share formats are aligned with **v2rayN / v2rayNG**, not a fork of their UI.
+- Config generation follows current Xray JSON (`realitySettings`, `xhttpSettings`, Vision, hybrid domain matcher).  
+- **XrayController** uses reflection so the project compiles without the AAR; with `libv2ray.aar` the real core is used.  
+- **VPN path**: `VpnService` TUN + **hev-socks5-tunnel** (JNI) to local SOCKS.  
+- Share formats align with **v2rayN / v2rayNG**.
 
 ---
 
 ## License
 
 App code: MIT (this repository).  
-Xray-core / AndroidLibXrayLite: their respective licenses (MPL-2.0 / project licenses).  
+Xray-core / AndroidLibXrayLite / hev-socks5-tunnel: their respective licenses.  
 Use only with servers and networks you are authorized to access.
 
 ---
 
-## Roadmap ideas
+# BLA VPN — راهنمای فارسی
 
-- [ ] Native hev-socks5-tunnel integration for full system proxy performance  
-- [ ] Per-app proxy picker UI  
-- [ ] Config fragment dialerProxy chain  
-- [ ] WireGuard / Hysteria2 outbounds when using multi-core  
-- [ ] Latency-based auto server pick  
+یک **کلاینت Xray اندروید** مدرن با رابط Material 3. امکانات اصلی هم‌راستا با [v2rayN](https://github.com/2dust/v2rayN) و [v2rayNG](https://github.com/2dust/v2rayNG) است.
+
+| پروتکل | ترنسپورت | امنیت |
+|--------|----------|--------|
+| **VLESS** | TCP, WS, gRPC, HTTPUpgrade, **XHTTP**, KCP, QUIC, H2 | none, TLS, **REALITY** |
+| **VMess** | همان | TLS / REALITY |
+| **Trojan** | همان | TLS / REALITY |
+| **Shadowsocks** | TCP | روش‌های AEAD |
+| JSON سفارشی | کانفیگ کامل Xray | — |
+
+### امکانات
+
+- **VLESS + REALITY + Vision**
+- ترنسپورت **XHTTP** و اثرانگشت **uTLS**
+- **Mux**، sniffing دامنه، DoH و FakeDNS
+- مسیریابی: Global · Bypass LAN · **دامنه‌های مستقیم** (با وایلدکارد)
+- TLS fragment (ضد DPI)
+- راه‌اندازی سریع، انتخاب چندتایی سرور، اشتراک (ترافیک / انقضا در صورت پشتیبانی ارائه‌دهنده)
+- محدودیت نشست، Keep-alive، امکان **استفاده دستگاه‌های LAN از پروکسی**
+- زبان پیش‌فرض **فارسی** + English
+- ورود لینک: `vless://`، `vmess://`، `trojan://`، `ss://` و URL اشتراک
+
+---
+
+## صفحات اپ
+
+- **خانه** — دکمه اتصال، آمار، تست سریع، نوار اشتراک  
+- **سرورها** — جستجو، تب هر اشتراک، انتخاب چندتایی، تأخیر  
+- **ورود** — چسباندن لینک، QR، VLESS دستی  
+- **اشتراک‌ها** — به‌روزرسانی، تغییر نام، ترافیک / انقضا  
+- **تنظیمات** — مسیریابی، پورت‌ها، fragment، زبان، محدودیت، راهنما  
+
+---
+
+## ساختار پروژه
+
+```
+app/src/main/java/com/xraypulse/app/
+  core/
+    config/XrayConfigBuilder.kt
+    parser/ShareLinkParser.kt
+    parser/ShareLinkExporter.kt
+    xray/XrayController.kt
+    vpn/HevTunnel.kt
+  service/XrayVpnService.kt
+  data/
+  ui/
+```
+
+---
+
+## ساخت (Build)
+
+### پیش‌نیاز
+
+- JDK 17 یا بالاتر  
+- Android SDK (ترجیحاً API 35)  
+- Gradle (wrapper داخل پروژه)
+
+فایل `local.properties` را بسازید (در گیت commit نمی‌شود):
+
+```properties
+sdk.dir=/path/to/Android/Sdk
+```
+
+### APK دیباگ
+
+```bash
+./gradlew :app:assembleDebug
+```
+
+خروجی:
+
+```
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+در ویندوز می‌توانید از اسکریپت هم استفاده کنید:
+
+```powershell
+.\scripts\build-debug.ps1
+```
+
+### اتصال هسته Xray (برای ترافیک واقعی لازم است)
+
+فایل `libv2ray.aar` را از [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite) در پوشه `app/libs/` قرار دهید.
+
+**لینوکس / مک / WSL**
+
+```bash
+chmod +x scripts/build-libxray.sh
+./scripts/build-libxray.sh
+```
+
+**دستی**
+
+```bash
+git clone https://github.com/2dust/AndroidLibXrayLite.git
+cd AndroidLibXrayLite
+gomobile init
+go mod tidy
+gomobile bind -v -androidapi 24 -trimpath -ldflags='-s -w -buildid= -checklinkname=0' ./
+cp libv2ray.aar /path/to/this-project/app/libs/
+```
+
+دانلود اختیاری geo:
+
+```bash
+./scripts/download-geo.ps1
+```
+
+### نصب
+
+```bash
+./gradlew :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+نسخه‌های release در بخش [Releases](https://github.com/davoodtaba-glitch/Bla-Vpn-pulse-/releases) منتشر می‌شوند.
+
+---
+
+## نحوه استفاده
+
+1. یک لینک اشتراک یا `vless://…` را **وارد** کنید (یا از **راه‌اندازی سریع**).  
+2. در **سرورها** یک سرور را انتخاب کنید.  
+3. در **خانه** دکمه اتصال را بزنید و مجوز VPN را بدهید.  
+4. در **تنظیمات** در صورت نیاز مسیریابی، fragment، پورت و زبان را تنظیم کنید.
+
+نمونه لینک VLESS + REALITY:
+
+```
+vless://UUID@host:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.com&fp=chrome&pbk=PUBLIC_KEY&sid=SHORT_ID&type=tcp#MyServer
+```
+
+---
+
+## نکات معماری
+
+- ساخت کانفیگ مطابق JSON فعلی Xray.  
+- **XrayController** با reflection کار می‌کند تا بدون AAR هم کامپایل شود؛ با `libv2ray.aar` هسته واقعی استفاده می‌شود.  
+- مسیر VPN: TUN از `VpnService` + **hev-socks5-tunnel** به SOCKS محلی.  
+- فرمت لینک‌ها با **v2rayN / v2rayNG** سازگار است.
+
+---
+
+## مجوز
+
+کد اپ: MIT (این مخزن).  
+Xray-core / AndroidLibXrayLite / hev-socks5-tunnel: مجوزهای مربوط به خودشان.  
+فقط روی سرور و شبکه‌ای استفاده کنید که مجاز هستید.
