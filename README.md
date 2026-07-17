@@ -24,13 +24,39 @@ A modern **Android Xray client** with Material 3 UI. Supports the same core feat
 
 ---
 
-## Screens
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/screen-01.jpg" width="180" alt="Home (FA)" />
+  <img src="docs/screenshots/screen-02.jpg" width="180" alt="Servers (FA)" />
+  <img src="docs/screenshots/screen-03.jpg" width="180" alt="Import (FA)" />
+  <img src="docs/screenshots/screen-04.jpg" width="180" alt="Settings (FA)" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/screen-05.jpg" width="180" alt="Settings routing" />
+  <img src="docs/screenshots/screen-06.jpg" width="180" alt="Session limits" />
+  <img src="docs/screenshots/screen-07.jpg" width="180" alt="Appearance" />
+  <img src="docs/screenshots/screen-08.jpg" width="180" alt="Language & fragment" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/screen-09.jpg" width="180" alt="Local ports" />
+  <img src="docs/screenshots/screen-10.jpg" width="180" alt="About / help" />
+  <img src="docs/screenshots/screen-11.jpg" width="180" alt="Per-app proxy" />
+  <img src="docs/screenshots/screen-12.jpg" width="180" alt="Quick setup" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/screen-13.jpg" width="180" alt="Home connected" />
+  <img src="docs/screenshots/screen-14.jpg" width="180" alt="Home connected (alt)" />
+</p>
+
+### Screens (overview)
 
 - **Home** — connect button, stats, quick test, subscription bars  
 - **Servers** — search, tabs per subscription, multi-select, latency  
 - **Import** — links / multi-line paste, QR, manual VLESS  
 - **Subscriptions** — refresh, rename, traffic / expire  
 - **Settings** — routing, ports, fragment, language, limits, help  
+- **Quick setup** — guided import / color / limits / language  
 
 ---
 
@@ -181,6 +207,31 @@ Use only with servers and networks you are authorized to access.
 
 ---
 
+## تصاویر صفحه (Screenshots)
+
+<p align="center">
+  <img src="docs/screenshots/screen-01.jpg" width="180" alt="خانه" />
+  <img src="docs/screenshots/screen-02.jpg" width="180" alt="سرورها" />
+  <img src="docs/screenshots/screen-03.jpg" width="180" alt="ورود" />
+  <img src="docs/screenshots/screen-04.jpg" width="180" alt="تنظیمات" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/screen-05.jpg" width="180" alt="مسیریابی" />
+  <img src="docs/screenshots/screen-06.jpg" width="180" alt="محدودیت نشست" />
+  <img src="docs/screenshots/screen-07.jpg" width="180" alt="ظاهر" />
+  <img src="docs/screenshots/screen-08.jpg" width="180" alt="زبان و fragment" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/screen-09.jpg" width="180" alt="پورت‌ها" />
+  <img src="docs/screenshots/screen-10.jpg" width="180" alt="راهنما" />
+  <img src="docs/screenshots/screen-11.jpg" width="180" alt="پروکسی هر اپ" />
+  <img src="docs/screenshots/screen-12.jpg" width="180" alt="راه‌اندازی سریع" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/screen-13.jpg" width="180" alt="خانه متصل" />
+  <img src="docs/screenshots/screen-14.jpg" width="180" alt="خانه متصل" />
+</p>
+
 ## صفحات اپ
 
 - **خانه** — دکمه اتصال، آمار، تست سریع، نوار اشتراک  
@@ -188,6 +239,7 @@ Use only with servers and networks you are authorized to access.
 - **ورود** — چسباندن لینک، QR، VLESS دستی  
 - **اشتراک‌ها** — به‌روزرسانی، تغییر نام، ترافیک / انقضا  
 - **تنظیمات** — مسیریابی، پورت‌ها، fragment، زبان، محدودیت، راهنما  
+- **راه‌اندازی سریع** — ورود هدایت‌شده / رنگ / محدودیت / زبان  
 
 ---
 
