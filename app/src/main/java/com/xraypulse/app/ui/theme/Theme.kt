@@ -134,15 +134,14 @@ val PulseSuccess get() = CyberpunkPalette.success
 val PulseWarning get() = CyberpunkPalette.warning
 val PulseError get() = CyberpunkPalette.error
 
-val ThemeAccentPresets = listOf(
-    0xFF00E5FFL to "Neon cyan",
-    0xFF4DA3FFL to "Neon blue",
+/** Six primary accent colors for the friendly chooser (no RGB sliders). */
+val ThemeMainColors = listOf(
+    0xFF00E5FFL to "Cyan",
+    0xFF3D9EFFL to "Blue",
     0xFF00E5C3L to "Teal",
-    0xFF6C8CFFL to "Indigo",
     0xFF9B6CFFL to "Violet",
-    0xFF3DFFB5L to "Mint",
     0xFFFFC857L to "Amber",
-    0xFFFF6B7AL to "Coral"
+    0xFFFF5C8AL to "Rose"
 )
 
 fun Long.toComposeColor(): Color = Color((this or 0xFF000000L).toInt())

@@ -21,10 +21,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.NetworkCheck
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -68,7 +70,9 @@ fun HomeScreen(
     onToggle: () -> Unit,
     onOpenServers: () -> Unit,
     onQuickSetup: () -> Unit = {},
-    onQuickTest: () -> Unit = {}
+    onQuickTest: () -> Unit = {},
+    onRefreshActiveSubscription: () -> Unit = {},
+    isBusy: Boolean = false
 ) {
     val accent = LocalAccent.current
     val p = LocalPalette.current
@@ -344,11 +348,32 @@ fun HomeScreen(
                 }
                 GlassCard(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "${t("subscription")} · ${sub.name}",
+                                color = accent,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = onRefreshActiveSubscription,
+                                enabled = !isBusy
+                            ) {
+                                NeonIcon(
+                                    Icons.Rounded.Refresh,
+                                    t("update_subscription"),
+                                    size = 22.dp
+                                )
+                            }
+                        }
                         Text(
-                            "${t("subscription")} · ${sub.name}",
-                            color = accent,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
+                            t("update_subscription_hint"),
+                            color = p.muted,
+                            fontSize = 11.sp
                         )
                         Spacer(Modifier.height(10.dp))
                         SessionProgressBar(

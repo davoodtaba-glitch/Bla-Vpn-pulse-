@@ -221,7 +221,9 @@ class MainActivity : ComponentActivity() {
                                 onQuickTest = {
                                     state.selected?.let { vm.testLatency(it) }
                                         ?: vm.toast("Select a server first")
-                                }
+                                },
+                                onRefreshActiveSubscription = vm::refreshActiveSubscription,
+                                isBusy = state.isBusy
                             )
                         }
                         composable(Route.Servers.path) {
@@ -309,7 +311,8 @@ class MainActivity : ComponentActivity() {
                                 subscriptions = state.subscriptions,
                                 onRefresh = vm::refreshSubscription,
                                 onDelete = vm::deleteSubscription,
-                                onRename = vm::renameSubscription
+                                onRename = vm::renameSubscription,
+                                onUpdate = vm::updateSubscription
                             )
                         }
                         composable(

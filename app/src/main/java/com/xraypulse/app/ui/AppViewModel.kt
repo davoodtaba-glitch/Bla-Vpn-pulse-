@@ -243,6 +243,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         toast("Subscription renamed")
     }
 
+    fun updateSubscription(id: Long, name: String, url: String) = viewModelScope.launch {
+        serversRepo.updateSubscription(id, name, url)
+        toast("Subscription updated")
+    }
+
+    fun refreshActiveSubscription() = viewModelScope.launch {
+        val sid = uiState.value.selected?.subscriptionId
+        if (sid == null) {
+            toast("Active server has no subscription")
+            return@launch
+        }
+        _busy.value = true
+        try {
+            val n = serversRepo.refreshSubscription(sid)
+            toast("Subscription updated · $n servers")
+        } catch (e: Exception) {
+            toast(e.message ?: "Update failed")
+        } finally {
+            _busy.value = false
+        }
+    }
+
     fun updateSettings(transform: (AppSettings) -> AppSettings) = viewModelScope.launch {
         val prev = uiState.value.settings
         val next = transform(prev)

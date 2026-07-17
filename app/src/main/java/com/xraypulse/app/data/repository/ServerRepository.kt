@@ -103,6 +103,14 @@ class ServerRepository(context: Context) {
         subDao.update(sub.copy(name = n))
     }
 
+    /** Update name and/or URL of a subscription (URL change does not auto-refresh). */
+    suspend fun updateSubscription(id: Long, name: String? = null, url: String? = null) {
+        val sub = subDao.getById(id) ?: return
+        val n = name?.trim()?.takeIf { it.isNotEmpty() } ?: sub.name
+        val u = url?.trim()?.takeIf { it.isNotEmpty() } ?: sub.url
+        subDao.update(sub.copy(name = n, url = u))
+    }
+
     suspend fun refreshSubscription(id: Long): Int = withContext(Dispatchers.IO) {
         val sub = subDao.getById(id) ?: return@withContext 0
         val req = Request.Builder()

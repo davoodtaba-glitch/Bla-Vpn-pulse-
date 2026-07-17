@@ -12,8 +12,8 @@ android {
         applicationId = "com.xraypulse.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.08"
+        versionCode = 12
+        versionName = "1.11"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
 

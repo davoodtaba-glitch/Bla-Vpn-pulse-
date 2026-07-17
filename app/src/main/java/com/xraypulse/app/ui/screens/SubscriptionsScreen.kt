@@ -53,12 +53,14 @@ fun SubscriptionsScreen(
     subscriptions: List<Subscription>,
     onRefresh: (Long) -> Unit,
     onDelete: (Long) -> Unit,
-    onRename: (Long, String) -> Unit = { _, _ -> }
+    onRename: (Long, String) -> Unit = { _, _ -> },
+    onUpdate: (Long, String, String) -> Unit = { _, _, _ -> }
 ) {
     val p = LocalPalette.current
     val accent = LocalAccent.current
-    var renameTarget by remember { mutableStateOf<Subscription?>(null) }
-    var renameText by remember { mutableStateOf("") }
+    var editTarget by remember { mutableStateOf<Subscription?>(null) }
+    var editName by remember { mutableStateOf("") }
+    var editUrl by remember { mutableStateOf("") }
 
     Column(
         Modifier
@@ -98,10 +100,11 @@ fun SubscriptionsScreen(
                                     )
                                 }
                                 IconButton(onClick = {
-                                    renameTarget = sub
-                                    renameText = sub.name
+                                    editTarget = sub
+                                    editName = sub.name
+                                    editUrl = sub.url
                                 }) {
-                                    NeonIcon(Icons.Rounded.Edit, t("rename_subscription"))
+                                    NeonIcon(Icons.Rounded.Edit, t("edit_subscription"))
                                 }
                                 IconButton(onClick = { onRefresh(sub.id) }) {
                                     NeonIcon(Icons.Rounded.Refresh, t("refresh"))
@@ -159,38 +162,65 @@ fun SubscriptionsScreen(
         }
     }
 
-    renameTarget?.let { sub ->
+    editTarget?.let { sub ->
         AlertDialog(
-            onDismissRequest = { renameTarget = null },
-            title = { Text(t("rename_subscription")) },
+            onDismissRequest = { editTarget = null },
+            title = { Text(t("edit_subscription")) },
             text = {
-                OutlinedTextField(
-                    value = renameText,
-                    onValueChange = { renameText = it },
-                    singleLine = true,
-                    label = { Text(t("name")) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = accent,
-                        unfocusedBorderColor = p.border,
-                        focusedTextColor = p.text,
-                        unfocusedTextColor = p.text,
-                        cursorColor = accent
+                Column {
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        singleLine = true,
+                        label = { Text(t("name")) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = accent,
+                            unfocusedBorderColor = p.border,
+                            focusedTextColor = p.text,
+                            unfocusedTextColor = p.text,
+                            cursorColor = accent
+                        )
                     )
-                )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = editUrl,
+                        onValueChange = { editUrl = it },
+                        singleLine = false,
+                        maxLines = 4,
+                        label = { Text(t("subscription_url")) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = accent,
+                            unfocusedBorderColor = p.border,
+                            focusedTextColor = p.text,
+                            unfocusedTextColor = p.text,
+                            cursorColor = accent
+                        )
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        t("edit_subscription_hint"),
+                        color = p.muted,
+                        fontSize = 11.sp
+                    )
+                }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        if (renameText.isNotBlank()) onRename(sub.id, renameText)
-                        renameTarget = null
+                        if (editName.isNotBlank() && editUrl.isNotBlank()) {
+                            onUpdate(sub.id, editName, editUrl)
+                        }
+                        editTarget = null
                     },
-                    enabled = renameText.isNotBlank()
+                    enabled = editName.isNotBlank() && editUrl.isNotBlank()
                 ) { Text(t("ok"), color = accent) }
             },
             dismissButton = {
-                TextButton(onClick = { renameTarget = null }) { Text(t("cancel")) }
+                TextButton(onClick = { editTarget = null }) { Text(t("cancel")) }
             }
         )
     }

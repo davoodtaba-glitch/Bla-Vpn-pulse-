@@ -38,6 +38,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xraypulse.app.ui.components.GlassCard
 import com.xraypulse.app.ui.components.NeonIcon
+import com.xraypulse.app.ui.i18n.AppStrings
+import com.xraypulse.app.ui.i18n.LocalStrings
+import com.xraypulse.app.ui.i18n.t
 import com.xraypulse.app.ui.theme.LocalAccent
 import com.xraypulse.app.ui.theme.LocalPalette
 
@@ -64,6 +67,8 @@ fun ImportScreen(
     val clipboard = LocalClipboardManager.current
     val accent = LocalAccent.current
     val p = LocalPalette.current
+    val strings = LocalStrings.current
+    fun tr(key: String): String = strings[key] ?: AppStrings.en[key] ?: key
 
     fun classifyAndImport() {
         val (subs, configs) = splitImportInput(paste)
@@ -71,10 +76,9 @@ fun ImportScreen(
         if (subs.isNotEmpty()) {
             pendingSubs = subs
             subNames = subs.indices.associateWith { i ->
-                "Subscription ${i + 1}"
+                tr("subscription") + " ${i + 1}"
             }
             showNameDialog = true
-            // configs will be imported together after names confirmed
         } else {
             onImportMixed(configs, emptyList()) { }
         }
@@ -87,9 +91,9 @@ fun ImportScreen(
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
-        Text("Import", color = p.text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text(t("import"), color = p.text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Text(
-            "Paste config links and/or subscription URLs — auto-detected",
+            t("import_page_subtitle"),
             color = p.muted,
             fontSize = 13.sp
         )
@@ -97,10 +101,10 @@ fun ImportScreen(
 
         GlassCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
-                Text("Links", color = p.text, fontWeight = FontWeight.SemiBold)
+                Text(t("import_links"), color = p.text, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "vless:// · vmess:// · trojan:// · ss:// · https:// subscription · multi-line",
+                    t("import_links_hint"),
                     color = p.muted,
                     fontSize = 12.sp
                 )
@@ -113,7 +117,7 @@ fun ImportScreen(
                         .height(180.dp),
                     placeholder = {
                         Text(
-                            "Paste one or many links…\nhttps://provider/sub\nvless://…",
+                            t("import_paste_placeholder"),
                             color = p.muted
                         )
                     },
@@ -139,7 +143,7 @@ fun ImportScreen(
                     ) {
                         NeonIcon(Icons.Rounded.ContentPaste, null, size = 20.dp)
                         Spacer(Modifier.size(6.dp))
-                        Text("Paste")
+                        Text(t("paste"))
                     }
                     Button(
                         onClick = { classifyAndImport() },
@@ -153,7 +157,7 @@ fun ImportScreen(
                     ) {
                         NeonIcon(Icons.Rounded.Link, null, size = 20.dp, tintOverride = Color.Black)
                         Spacer(Modifier.size(6.dp))
-                        Text("Import")
+                        Text(t("import_btn"))
                     }
                 }
             }
@@ -172,14 +176,14 @@ fun ImportScreen(
             ) {
                 NeonIcon(Icons.Rounded.QrCodeScanner, null, size = 22.dp)
                 Spacer(Modifier.size(6.dp))
-                Text("Scan QR")
+                Text(t("scan_qr"))
             }
             OutlinedButton(
                 onClick = onManual,
                 modifier = Modifier.weight(1f).height(52.dp),
                 shape = RoundedCornerShape(14.dp)
             ) {
-                Text("Manual VLESS")
+                Text(t("manual_vless"))
             }
         }
 
@@ -189,13 +193,12 @@ fun ImportScreen(
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(14.dp)
         ) {
-            Text("Manage subscriptions")
+            Text(t("manage_subscriptions"))
         }
 
         Spacer(Modifier.height(24.dp))
         Text(
-            "Tip: you can paste several configs and multiple subscription URLs at once. " +
-                "Each https:// line is treated as a subscription (name asked once per URL).",
+            t("import_tip"),
             color = p.muted,
             fontSize = 12.sp,
             lineHeight = 18.sp
@@ -205,11 +208,11 @@ fun ImportScreen(
     if (showNameDialog && pendingSubs.isNotEmpty()) {
         AlertDialog(
             onDismissRequest = { showNameDialog = false },
-            title = { Text("Name subscription(s)") },
+            title = { Text(t("name_subscription")) },
             text = {
                 Column {
                     Text(
-                        "Detected ${pendingSubs.size} subscription URL(s). Set a display name for each.",
+                        t("import_detected_subs").replace("{n}", pendingSubs.size.toString()),
                         color = p.muted,
                         fontSize = 13.sp
                     )
@@ -226,7 +229,7 @@ fun ImportScreen(
                             onValueChange = { v -> subNames = subNames + (i to v) },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
-                            label = { Text("Name") },
+                            label = { Text(t("name")) },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = accent,
                                 unfocusedBorderColor = p.border,
@@ -244,17 +247,18 @@ fun ImportScreen(
                     showNameDialog = false
                     val (_, configs) = splitImportInput(paste)
                     val pairs = pendingSubs.mapIndexed { i, url ->
-                        (subNames[i]?.ifBlank { "Subscription ${i + 1}" } ?: "Subscription ${i + 1}") to url
+                        val fallback = tr("subscription") + " ${i + 1}"
+                        (subNames[i]?.ifBlank { fallback } ?: fallback) to url
                     }
                     pendingSubs = emptyList()
                     onImportMixed(configs, pairs) { }
-                }) { Text("Import all") }
+                }) { Text(t("import_all")) }
             },
             dismissButton = {
                 TextButton(onClick = {
                     showNameDialog = false
                     pendingSubs = emptyList()
-                }) { Text("Cancel") }
+                }) { Text(t("cancel")) }
             }
         )
     }
@@ -276,7 +280,6 @@ fun splitImportInput(raw: String): Pair<List<String>, String> {
             configLines += t
         }
     }
-    // Whole-blob single subscription URL
     val whole = raw.trim()
     if (subs.isEmpty() && configLines.isEmpty() && isSubscriptionLine(whole)) {
         return listOf(whole) to ""
@@ -287,7 +290,6 @@ fun splitImportInput(raw: String): Pair<List<String>, String> {
 fun isSubscriptionLine(text: String): Boolean {
     val t = text.trim().lowercase()
     if (!(t.startsWith("http://") || t.startsWith("https://"))) return false
-    // deep-links shouldn't be treated as sub alone
     if (t.contains("vless://") || t.contains("vmess://") || t.contains("trojan://")) return false
     return true
 }

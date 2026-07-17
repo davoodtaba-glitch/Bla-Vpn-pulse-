@@ -30,8 +30,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -39,15 +37,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
@@ -58,19 +55,16 @@ import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.xraypulse.app.core.config.XrayConfigBuilder
 import com.xraypulse.app.data.model.AppSettings
 import com.xraypulse.app.data.model.FragmentPresets
 import com.xraypulse.app.data.model.RoutingMode
 import com.xraypulse.app.data.model.SessionLimitPresets
 import com.xraypulse.app.ui.components.GlassCard
-import com.xraypulse.app.ui.theme.AppThemeStyle
+import com.xraypulse.app.ui.components.HsvColorPicker
 import com.xraypulse.app.ui.theme.LocalAccent
 import com.xraypulse.app.ui.theme.LocalPalette
-import com.xraypulse.app.ui.theme.ThemeAccentPresets
-import com.xraypulse.app.ui.theme.toAppThemeStyle
+import com.xraypulse.app.ui.theme.ThemeMainColors
 import com.xraypulse.app.ui.theme.toComposeColor
-import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(
@@ -87,13 +81,15 @@ fun SettingsScreen(
     var draft by remember { mutableStateOf(settings) }
     var helpKey by remember { mutableStateOf<String?>(null) }
 
-    // Sync draft when saved settings change from outside (and no dirty edits)
-    LaunchedEffect(settings) {
-        draft = settings
-    }
-
     val dirty = draft != settings
     val scroll = rememberScrollState()
+
+    // Sync draft only when there are no local unsaved edits (prevents wipe/jank while typing or dragging color)
+    LaunchedEffect(settings) {
+        if (!dirty) {
+            draft = settings
+        }
+    }
 
     if (helpKey != null) {
         SettingsHelpScreen(
@@ -377,51 +373,102 @@ fun SettingsScreen(
         GlassCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text(
-                    com.xraypulse.app.ui.i18n.t("help_appearance_body").lines().firstOrNull().orEmpty(),
+                    com.xraypulse.app.ui.i18n.t("color_chooser_hint"),
                     color = p.muted,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(bottom = 10.dp)
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    modifier = Modifier.padding(bottom = 14.dp)
                 )
-                Text(com.xraypulse.app.ui.i18n.t("theme_frame_color"), color = p.text, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ThemeAccentPresets.forEach { (argb, name) ->
-                        val selected = settings.accentColor == argb
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Box(
-                                Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(argb.toComposeColor())
-                                    .then(
-                                        if (selected) Modifier.border(3.dp, Color.White, CircleShape)
-                                        else Modifier.border(1.dp, p.border, CircleShape)
-                                    )
-                                    .clickable {
-                                        draft = draft.copy(themeStyle = "PULSE", accentColor = argb)
-                                        onApplyAppearance("PULSE", argb)
+                Text(
+                    com.xraypulse.app.ui.i18n.t("main_colors"),
+                    color = p.text,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(12.dp))
+                // 6 main colors — 2 rows × 3 large friendly chips
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    ThemeMainColors.chunked(3).forEach { row ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            row.forEach { (argb, name) ->
+                                val selected = draft.accentColor == argb ||
+                                    settings.accentColor == argb
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Box(
+                                        Modifier
+                                            .size(52.dp)
+                                            .shadow(
+                                                elevation = if (selected) 10.dp else 2.dp,
+                                                shape = CircleShape,
+                                                ambientColor = argb.toComposeColor().copy(0.45f),
+                                                spotColor = argb.toComposeColor().copy(0.35f)
+                                            )
+                                            .clip(CircleShape)
+                                            .background(argb.toComposeColor())
+                                            .then(
+                                                if (selected) {
+                                                    Modifier.border(3.dp, Color.White, CircleShape)
+                                                } else {
+                                                    Modifier.border(
+                                                        1.5.dp,
+                                                        p.border.copy(alpha = 0.5f),
+                                                        CircleShape
+                                                    )
+                                                }
+                                            )
+                                            .clickable {
+                                                draft = draft.copy(
+                                                    themeStyle = "PULSE",
+                                                    accentColor = argb
+                                                )
+                                                onApplyAppearance("PULSE", argb)
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (selected) {
+                                            Text(
+                                                "✓",
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 18.sp
+                                            )
+                                        }
                                     }
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(name, color = p.muted, fontSize = 10.sp)
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        name,
+                                        color = if (selected) accent else p.muted,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                }
+                            }
                         }
                     }
                 }
 
-                Spacer(Modifier.height(16.dp))
-                Text(com.xraypulse.app.ui.i18n.t("custom_color"), color = p.text, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    com.xraypulse.app.ui.i18n.t("custom_color"),
+                    color = p.text,
+                    fontWeight = FontWeight.SemiBold
+                )
                 Spacer(Modifier.height(4.dp))
-                Text(com.xraypulse.app.ui.i18n.t("custom_color_hint"), color = p.muted, fontSize = 11.sp)
+                Text(
+                    com.xraypulse.app.ui.i18n.t("custom_color_hint"),
+                    color = p.muted,
+                    fontSize = 11.sp
+                )
                 Spacer(Modifier.height(10.dp))
-                CustomColorPicker(
-                    colorArgb = settings.accentColor,
-                    onColorChange = { argb ->
+                HsvColorPicker(
+                    colorArgb = draft.accentColor,
+                    onCommit = { argb ->
                         draft = draft.copy(themeStyle = "PULSE", accentColor = argb)
                         onApplyAppearance("PULSE", argb)
-                    }
+                    },
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
@@ -880,70 +927,4 @@ private fun parseTrafficLimitChip(label: String): Int = when {
     label.contains("GB", ignoreCase = true) ->
         (label.filter { it.isDigit() }.toIntOrNull() ?: 0) * 1024
     else -> label.filter { it.isDigit() }.toIntOrNull() ?: 0
-}
-
-@Composable
-private fun CustomColorPicker(
-    colorArgb: Long,
-    onColorChange: (Long) -> Unit
-) {
-    val accent = LocalAccent.current
-    val p = LocalPalette.current
-    val c = colorArgb.toComposeColor()
-    var r by remember(colorArgb) { mutableFloatStateOf(c.red) }
-    var g by remember(colorArgb) { mutableFloatStateOf(c.green) }
-    var b by remember(colorArgb) { mutableFloatStateOf(c.blue) }
-
-    fun push(nr: Float, ng: Float, nb: Float) {
-        r = nr; g = ng; b = nb
-        val color = Color(nr, ng, nb, 1f)
-        val argb = (0xFF000000L or (color.toArgb().toLong() and 0xFFFFFFL))
-        onColorChange(argb)
-    }
-
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(r, g, b))
-                    .border(2.dp, accent.copy(0.6f), RoundedCornerShape(12.dp))
-            )
-            Spacer(Modifier.size(12.dp))
-            Text(
-                "R ${(r * 255).roundToInt()}  G ${(g * 255).roundToInt()}  B ${(b * 255).roundToInt()}",
-                color = p.muted,
-                fontSize = 12.sp
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        ColorSlider("Red", r, Color(0xFFFF5555), accent) { push(it, g, b) }
-        ColorSlider("Green", g, Color(0xFF55FF55), accent) { push(r, it, b) }
-        ColorSlider("Blue", b, Color(0xFF5599FF), accent) { push(r, g, it) }
-    }
-}
-
-@Composable
-private fun ColorSlider(
-    label: String,
-    value: Float,
-    activeTrack: Color,
-    thumb: Color,
-    onChange: (Float) -> Unit
-) {
-    val p = LocalPalette.current
-    Column(Modifier.padding(vertical = 2.dp)) {
-        Text(label, color = p.muted, fontSize = 11.sp)
-        Slider(
-            value = value,
-            onValueChange = onChange,
-            valueRange = 0f..1f,
-            colors = SliderDefaults.colors(
-                thumbColor = thumb,
-                activeTrackColor = activeTrack,
-                inactiveTrackColor = p.surface2
-            )
-        )
-    }
 }
