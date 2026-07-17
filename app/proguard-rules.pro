@@ -1,0 +1,6 @@
+-keep class go.** { *; }
+-keep class libv2ray.** { *; }
+-keep class libXray.** { *; }
+-keep class com.xraypulse.app.core.xray.** { *; }
+-dontwarn go.**
+-dontwarn libv2ray.**

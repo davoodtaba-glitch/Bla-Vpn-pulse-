@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BLA VPN</string>
+    <string name="vpn_notification_title">BLA VPN Connected</string>
+    <string name="vpn_notification_text">Secure tunnel is active</string>
+    <string name="vpn_channel_name">VPN Status</string>
+    <string name="vpn_channel_desc">Shows connection status for the secure tunnel</string>
+    <string name="limit_channel_name">Session reminders</string>
+</resources>
