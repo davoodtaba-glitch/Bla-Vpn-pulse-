@@ -9,6 +9,7 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.system.OsConstants
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.xraypulse.app.MainActivity
@@ -46,15 +47,17 @@ class XrayVpnService : VpnService() {
     private var statsJob: Job? = null
     private var healthJob: Job? = null
     private var keepAliveJob: Job? = null
-    private var sessionTimeLimitMs: Long = 0L
-    private var sessionTrafficLimitBytes: Long = 0L
-    /** "notify" or "disconnect" when a limit is fully reached. */
-    private var limitActionOnReach: String = "notify"
-    /** Highest warning level already shown this session (0/1/2) for time & traffic separately */
-    private var timeWarnLevel = 0
-    private var trafficWarnLevel = 0
-    /** True after friendly "limit reached" notification was sent. */
-    private var limitReachedNotified = false
+    private var geoJob: Job? = null
+    private var trafficProbeJob: Job? = null
+    /** Settings for keep-alive / no-traffic probes (set on each connect). */
+    @Volatile private var activeSettings: AppSettings = AppSettings()
+    @Volatile private var trafficProbeInFlight: Boolean = false
+    /** Last time we finished a no-traffic verification probe (success or fail). */
+    @Volatile private var lastTrafficProbeAtMs: Long = 0L
+    private var uiLanguage: String = "fa"
+
+    private fun isFa(): Boolean =
+        uiLanguage.lowercase() in listOf("fa", "fa-ir", "persian", "farsi")
 
     override fun onCreate() {
         super.onCreate()
@@ -94,17 +97,10 @@ class XrayVpnService : VpnService() {
 
             // Stop previous cleanly
             cleanupCore()
-
-            sessionTimeLimitMs = if (settings.sessionTimeLimitMinutes > 0)
-                settings.sessionTimeLimitMinutes.toLong() * 60_000L else 0L
-            sessionTrafficLimitBytes = if (settings.sessionTrafficLimitMb > 0)
-                settings.sessionTrafficLimitMb.toLong() * 1024L * 1024L else 0L
-            limitActionOnReach = settings.limitActionOnReach.ifBlank { "notify" }
-            timeWarnLevel = 0
-            trafficWarnLevel = 0
-            limitReachedNotified = false
+            uiLanguage = settings.language
 
             val config = XrayConfigBuilder.build(profile, settings)
+            Log.i(TAG, "DNS config:\n${XrayConfigBuilder.describeDnsConfig(settings)}")
             Log.d(TAG, "Starting Xray…")
 
             // 1) Start Xray first so SOCKS is ready before TUN packets arrive
@@ -121,11 +117,12 @@ class XrayVpnService : VpnService() {
 
             // 3) TUN → SOCKS via hev-socks5-tunnel
             // ipv4 MUST match VpnService interface address (v2rayNG style)
+            val mtu = settings.mtu.coerceIn(1280, 1500)
             val ok = HevTunnel.start(
                 context = applicationContext,
                 tun = fd,
                 socksPort = settings.localSocksPort,
-                mtu = 1500,
+                mtu = mtu,
                 ipv4 = VPN_IPV4,
                 dnsListenPort = 10853
             )
@@ -134,17 +131,24 @@ class XrayVpnService : VpnService() {
             }
 
             startForeground(NOTIFICATION_ID, buildNotification(profile.displayTitle(), true))
+            activeSettings = settings
+            lastTrafficProbeAtMs = 0L
+            trafficProbeInFlight = false
+            // Tunnel is up, but UI stays on Connecting until IP + country succeed.
             _state.value = ConnectionState(
                 isConnected = true,
-                isConnecting = false,
+                isConnecting = true,
                 selectedServerId = profile.id,
                 selectedRemark = profile.displayTitle(),
                 startTimeMs = System.currentTimeMillis(),
-                noTraffic = false
+                noTraffic = false,
+                publicIp = "",
+                publicCountry = ""
             )
             startStatsLoop()
             startHealthWatch()
             startKeepAlive(settings)
+            startIpGeoLookup(settings)
         } catch (e: Exception) {
             Log.e(TAG, "Connect failed", e)
             cleanupCore()
@@ -159,17 +163,30 @@ class XrayVpnService : VpnService() {
     }
 
     private fun buildVpnInterface(settings: AppSettings, profile: ServerProfile): ParcelFileDescriptor {
+        val mtu = settings.mtu.coerceIn(1280, 1500)
         val builder = Builder()
             .setSession("XrayPulse · ${profile.displayTitle()}")
-            .setMtu(1500)
+            .setMtu(mtu)
             // Same address as hev tunnel.ipv4 — required for correct tun2socks routing
             .addAddress(VPN_IPV4, 30)
-            // Point system DNS at FakeDNS/mapdns pool so resolution works without UDP-through-proxy
-            .addDnsServer(VPN_DNS)
+            // Authoritative DNS: ONLY the IPs derived from the user's configured servers.
+            // Do not invent a second resolver (no auto 1.0.0.1 / 8.8.4.4 pair).
+            .apply {
+                val ips = XrayConfigBuilder.vpnDnsIps(settings)
+                ips.forEach { addDnsServer(it) }
+                Log.i(TAG, "VPN interface DNS servers (authoritative)=$ips")
+            }
             .addRoute("0.0.0.0", 0)
 
-        // Intentionally NO IPv6: broken IPv6 paths cause ERR_CONNECTION_CLOSED on many sites
-        // (Google/Facebook prefer AAAA records when available).
+        // IPv4-only VPN: reduce IPv6 DNS/data leaks outside the tunnel.
+        // Apps that would use IPv6 to reach Google DNS (2001:4860::) are forced to IPv4.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                builder.allowFamily(OsConstants.AF_INET)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "allowFamily(AF_INET): ${e.message}")
+        }
 
         // Never route our own package into the VPN (prevents Xray/hev loops)
         try {
@@ -212,10 +229,8 @@ class XrayVpnService : VpnService() {
                 var upDelta = 0L
                 var downDelta = 0L
                 if (hev != null && hev.size >= 4) {
-                    // Use absolute counters if increasing, else fall back to xray stats
                     val tx = hev[1]
                     val rx = hev[3]
-                    // treat as cumulative from hev — compute delta via state
                     val prevUp = _state.value.totalUpload
                     val prevDown = _state.value.totalDownload
                     // first sample: set baseline without jump
@@ -237,53 +252,35 @@ class XrayVpnService : VpnService() {
                     totalDown += downDelta
                 }
 
-                if (upDelta == 0L && downDelta == 0L) idleSeconds++ else idleSeconds = 0
-                val elapsed = System.currentTimeMillis() - _state.value.startTimeMs
-                val noTraffic = idleSeconds >= 45 && elapsed > 20_000
-                val totalTraffic = totalUp + totalDown
+                val hasFlow = upDelta > 0L || downDelta > 0L
+                if (hasFlow) {
+                    idleSeconds = 0
+                } else {
+                    idleSeconds++
+                }
 
-                // Approaching-limit warnings (80% / 95%)
-                val warns = mutableListOf<String>()
-                var maxLevel = 0
-                if (sessionTimeLimitMs > 0) {
-                    val ratio = elapsed.toDouble() / sessionTimeLimitMs.toDouble()
-                    val lvl = when {
-                        ratio >= 0.95 -> 2
-                        ratio >= 0.80 -> 1
-                        else -> 0
-                    }
-                    if (lvl > timeWarnLevel) {
-                        timeWarnLevel = lvl
-                        warns += if (lvl >= 2)
-                            "Time limit almost reached (${(ratio * 100).toInt()}%)"
-                        else
-                            "Time usage high (${(ratio * 100).toInt()}% of limit)"
-                    }
-                    maxLevel = maxOf(maxLevel, lvl)
+                val elapsed = System.currentTimeMillis() - _state.value.startTimeMs
+                // Real user traffic clears "no traffic" immediately (do not wait for another probe).
+                var noTraffic = _state.value.noTraffic
+                if (hasFlow && noTraffic) {
+                    noTraffic = false
+                    Log.i(TAG, "Traffic resumed — clearing no-traffic flag")
                 }
-                if (sessionTrafficLimitBytes > 0) {
-                    val ratio = totalTraffic.toDouble() / sessionTrafficLimitBytes.toDouble()
-                    val lvl = when {
-                        ratio >= 0.95 -> 2
-                        ratio >= 0.80 -> 1
-                        else -> 0
-                    }
-                    if (lvl > trafficWarnLevel) {
-                        trafficWarnLevel = lvl
-                        warns += if (lvl >= 2)
-                            "Traffic limit almost reached (${(ratio * 100).toInt()}%)"
-                        else
-                            "Traffic usage high (${(ratio * 100).toInt()}% of limit)"
-                    }
-                    maxLevel = maxOf(maxLevel, lvl)
-                }
-                val warnText = warns.joinToString(" · ").ifBlank {
-                    // Keep last banner while still in danger zone
-                    when {
-                        maxLevel >= 2 -> "Approaching session limits"
-                        maxLevel >= 1 -> "Session limits: high usage"
-                        else -> null
-                    }
+
+                // Idle alone is NOT enough to show red "no traffic".
+                // After sustained idle (and only when fully connected), verify with a test packet.
+                val fullyConnected = _state.value.isConnected && !_state.value.isConnecting
+                val now = System.currentTimeMillis()
+                val probeCooldownOk = now - lastTrafficProbeAtMs >= 45_000L
+                if (fullyConnected &&
+                    !hasFlow &&
+                    idleSeconds >= 45 &&
+                    elapsed > 25_000L &&
+                    !noTraffic &&
+                    !trafficProbeInFlight &&
+                    probeCooldownOk
+                ) {
+                    scheduleTrafficProbe()
                 }
 
                 _state.value = _state.value.copy(
@@ -291,88 +288,124 @@ class XrayVpnService : VpnService() {
                     downloadSpeed = downDelta,
                     totalUpload = totalUp,
                     totalDownload = totalDown,
-                    noTraffic = noTraffic,
-                    limitWarning = warnText,
-                    limitWarningLevel = maxLevel
+                    noTraffic = noTraffic
                 )
-
-                // Fire toast-style message via errorMessage only on new threshold (UI also shows banner)
-                if (warns.isNotEmpty()) {
-                    _state.value = _state.value.copy(
-                        limitWarning = warns.joinToString(" · "),
-                        limitWarningLevel = maxLevel
-                    )
-                    Log.i(TAG, "Limit warning: ${warns.joinToString()}")
-                }
-
-                // User session limits fully reached
-                val timeHit = sessionTimeLimitMs > 0 && elapsed >= sessionTimeLimitMs
-                val trafficHit = sessionTrafficLimitBytes > 0 && totalTraffic >= sessionTrafficLimitBytes
-                if ((timeHit || trafficHit) && !limitReachedNotified) {
-                    limitReachedNotified = true
-                    val disconnect = limitActionOnReach.equals("disconnect", ignoreCase = true)
-                    val title = if (disconnect) "Session limit reached" else "You're all set for now ✨"
-                    val body = when {
-                        disconnect && timeHit && trafficHit ->
-                            "Time and data limits reached. VPN is disconnecting."
-                        disconnect && timeHit ->
-                            "Session time limit reached. VPN is disconnecting."
-                        disconnect && trafficHit ->
-                            "Session data limit reached. VPN is disconnecting."
-                        timeHit && trafficHit ->
-                            "You've used your planned time and data for this session. Your connection is still on — take a short break if you like, or keep browsing."
-                        timeHit ->
-                            "Your session time goal is complete. BLA VPN is still connected so nothing drops suddenly — just a friendly heads-up!"
-                        else ->
-                            "You've reached your data goal for this session. No worries — the VPN stays connected so you can finish what you're doing."
-                    }
-                    Log.i(TAG, "Limit reached action=$limitActionOnReach time=$timeHit traffic=$trafficHit")
-                    _state.value = _state.value.copy(
-                        limitWarning = body,
-                        limitWarningLevel = 2
-                    )
-                    showLimitNotification(title, body)
-                    if (disconnect) {
-                        delay(400)
-                        disconnect()
-                        return@launch
-                    }
-                }
             }
         }
     }
 
-    private fun showLimitNotification(title: String, body: String) {
-        try {
-            val nm = getSystemService(NotificationManager::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                nm.createNotificationChannel(
-                    NotificationChannel(
-                        LIMIT_CHANNEL_ID,
-                        "Session reminders",
-                        NotificationManager.IMPORTANCE_DEFAULT
-                    ).apply {
-                        description = "Friendly reminders when session time or traffic goals are met"
-                    }
-                )
+    /**
+     * Verify the tunnel can still move data before showing "connected, no traffic".
+     * Sends a real HTTP probe via local Xray HTTP inbound; only sets [ConnectionState.noTraffic]
+     * when the probe fails (twice).
+     */
+    private fun scheduleTrafficProbe() {
+        if (trafficProbeInFlight) return
+        trafficProbeJob?.cancel()
+        trafficProbeJob = scope.launch {
+            trafficProbeInFlight = true
+            try {
+                if (!_state.value.isConnected || _state.value.isConnecting) return@launch
+                Log.i(TAG, "Idle detected — running tunnel test packet before no-traffic UI")
+                val ok1 = probeTunnel(activeSettings)
+                if (!_state.value.isConnected || _state.value.isConnecting) return@launch
+                if (ok1) {
+                    Log.i(TAG, "Traffic probe OK — tunnel works; not showing no-traffic")
+                    _state.value = _state.value.copy(noTraffic = false)
+                    return@launch
+                }
+                // Confirm dead path with a second packet
+                delay(1_500)
+                if (!_state.value.isConnected || _state.value.isConnecting) return@launch
+                val ok2 = probeTunnel(activeSettings)
+                if (!_state.value.isConnected || _state.value.isConnecting) return@launch
+                if (ok2) {
+                    Log.i(TAG, "Traffic probe recovered on 2nd try — not showing no-traffic")
+                    _state.value = _state.value.copy(noTraffic = false)
+                } else {
+                    Log.w(TAG, "Traffic probe FAILED twice — showing no-traffic to user")
+                    _state.value = _state.value.copy(noTraffic = true)
+                }
+            } finally {
+                lastTrafficProbeAtMs = System.currentTimeMillis()
+                trafficProbeInFlight = false
             }
-            val pi = PendingIntent.getActivity(
-                this, 2,
-                Intent(this, MainActivity::class.java),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val n = NotificationCompat.Builder(this, LIMIT_CHANNEL_ID)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentIntent(pi)
-                .setAutoCancel(true)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .build()
-            nm.notify(LIMIT_NOTIFICATION_ID, n)
+        }
+    }
+
+    /**
+     * HTTP GET through Xray local HTTP proxy. Success = tunnel can transfer data.
+     */
+    private fun probeTunnel(settings: AppSettings): Boolean {
+        val httpPort = settings.localHttpPort
+        val testUrl = settings.testUrl.ifBlank { "https://www.gstatic.com/generate_204" }
+        return try {
+            val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", httpPort))
+            val conn = (URL(testUrl).openConnection(proxy) as HttpURLConnection).apply {
+                connectTimeout = 12_000
+                readTimeout = 12_000
+                requestMethod = "GET"
+                instanceFollowRedirects = false
+                useCaches = false
+            }
+            try {
+                val code = conn.responseCode
+                // Any response from the origin (or proxy success) means bytes moved.
+                val ok = code in 200..399
+                Log.i(TAG, "Tunnel probe HTTP $code via 127.0.0.1:$httpPort → ok=$ok")
+                ok
+            } finally {
+                conn.disconnect()
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Limit notification failed: ${e.message}")
+            Log.w(TAG, "Tunnel probe failed: ${e.message}")
+            false
+        }
+    }
+
+    private fun startIpGeoLookup(settings: AppSettings) {
+        geoJob?.cancel()
+        val httpPort = settings.localHttpPort
+        geoJob = scope.launch {
+            // Stay in Connecting until both public IP and country are known.
+            var attempt = 0
+            while (isActive && _state.value.isConnected && _state.value.isConnecting) {
+                // First wait lets SOCKS/HTTP + proxy handshake settle; then space retries.
+                delay(if (attempt == 0) 3000L else 4000L)
+                if (!_state.value.isConnected || !_state.value.isConnecting) return@launch
+                attempt++
+                try {
+                    val info = com.xraypulse.app.util.IpGeoLookup.lookup(
+                        httpProxyPort = httpPort,
+                        maxAttempts = 2
+                    )
+                    val ipOk = info.ip.isNotBlank()
+                    val countryOk = info.country.isNotBlank()
+                    if (_state.value.isConnected && ipOk && countryOk) {
+                        _state.value = _state.value.copy(
+                            isConnecting = false,
+                            publicIp = info.ip,
+                            publicCountry = info.country
+                        )
+                        Log.i(TAG, "Connected (geo ready): ${info.ip} / ${info.country}")
+                        return@launch
+                    }
+                    // Partial result: keep IP if we got it, but remain Connecting for country
+                    if (ipOk && _state.value.isConnected) {
+                        _state.value = _state.value.copy(
+                            publicIp = info.ip,
+                            publicCountry = info.country // may still be blank
+                        )
+                    }
+                    Log.w(
+                        TAG,
+                        "Geo not ready yet attempt=$attempt ip=${info.ip.ifBlank { "-" }} " +
+                            "country=${info.country.ifBlank { "-" }} — stay Connecting"
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "IP geo lookup failed attempt=$attempt: ${e.message}")
+                }
+            }
         }
     }
 
@@ -391,30 +424,15 @@ class XrayVpnService : VpnService() {
         if (!settings.keepAliveEnabled) return
         val minutes = settings.keepAliveIntervalMinutes.coerceIn(1, 120)
         val intervalMs = minutes.toLong() * 60L * 1000L
-        val httpPort = settings.localHttpPort
-        val testUrl = settings.testUrl.ifBlank { "https://www.gstatic.com/generate_204" }
         keepAliveJob = scope.launch {
             while (isActive && _state.value.isConnected) {
                 delay(intervalMs)
                 if (!_state.value.isConnected) break
-                try {
-                    val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", httpPort))
-                    val conn = (URL(testUrl).openConnection(proxy) as HttpURLConnection).apply {
-                        connectTimeout = 15_000
-                        readTimeout = 15_000
-                        requestMethod = "GET"
-                        instanceFollowRedirects = false
-                        useCaches = false
-                    }
-                    try {
-                        val code = conn.responseCode
-                        Log.i(TAG, "Keep-alive ping HTTP $code via 127.0.0.1:$httpPort (every ${minutes}m)")
-                    } finally {
-                        conn.disconnect()
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Keep-alive ping failed: ${e.message}")
+                val ok = probeTunnel(settings)
+                if (ok && _state.value.noTraffic) {
+                    _state.value = _state.value.copy(noTraffic = false)
                 }
+                Log.i(TAG, "Keep-alive probe ok=$ok (every ${minutes}m)")
             }
         }
     }
@@ -423,6 +441,9 @@ class XrayVpnService : VpnService() {
         statsJob?.cancel()
         healthJob?.cancel()
         keepAliveJob?.cancel()
+        geoJob?.cancel()
+        trafficProbeJob?.cancel()
+        trafficProbeInFlight = false
         cleanupCore()
         _state.value = ConnectionState()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -484,15 +505,27 @@ class XrayVpnService : VpnService() {
             Intent(this, XrayVpnService::class.java).setAction(ACTION_DISCONNECT),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val openQuickPi = PendingIntent.getActivity(
+            this, 3,
+            Intent(this, MainActivity::class.java).apply {
+                action = ACTION_QUICK_TOGGLE
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val disconnectLabel = if (isFa()) "قطع اتصال" else "Disconnect"
+        val openLabel = if (isFa()) "باز کردن" else "Open"
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(if (connected) getString(R.string.vpn_notification_title) else getString(R.string.app_name))
             .setContentText(if (connected) title else getString(R.string.vpn_notification_text))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pi)
             .setOngoing(connected)
-            .addAction(0, "Disconnect", stopPi)
+            .addAction(0, disconnectLabel, stopPi)
+            .addAction(0, openLabel, openQuickPi)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
     }
 
@@ -501,12 +534,12 @@ class XrayVpnService : VpnService() {
         const val ACTION_CONNECT = "com.xraypulse.app.CONNECT"
         const val ACTION_DISCONNECT = "com.xraypulse.app.DISCONNECT"
         const val ACTION_RECONNECT = "com.xraypulse.app.RECONNECT"
+        /** Open MainActivity and toggle VPN (notification / tile quick action). */
+        const val ACTION_QUICK_TOGGLE = "com.xraypulse.app.QUICK_TOGGLE"
         const val EXTRA_PROFILE = "profile"
         const val EXTRA_SETTINGS = "settings"
         private const val CHANNEL_ID = "xraypulse_vpn"
         private const val NOTIFICATION_ID = 7101
-        private const val LIMIT_CHANNEL_ID = "bla_vpn_session_limits"
-        private const val LIMIT_NOTIFICATION_ID = 7103
         /** Must match HevTunnel ipv4 */
         const val VPN_IPV4 = "10.10.14.1"
         /** FakeDNS / mapdns address inside 198.18.0.0/15 pool */

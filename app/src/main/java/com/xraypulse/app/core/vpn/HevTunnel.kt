@@ -78,15 +78,11 @@ object HevTunnel {
         |  port: $socksPort
         |  address: 127.0.0.1
         |  udp: 'udp'
-        |mapdns:
-        |  address: 198.18.0.2
-        |  port: 53
-        |  network: 198.18.0.0
-        |  netmask: 255.254.0.0
-        |  cache-size: 10000
         |misc:
         |  tcp-read-write-timeout: 300000
         |  udp-read-write-timeout: 60000
         |  log-level: warn
         """.trimMargin()
+        // mapdns disabled — VPN interface uses real main/alt DNS (e.g. 1.1.1.1 + 1.0.0.1).
+        // Queries go TUN → SOCKS → Xray (port 53 → dns-out → user DNS).
 }

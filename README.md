@@ -14,11 +14,14 @@ A modern **Android Xray client** with Material 3 UI. Supports the same core feat
 
 - **VLESS + REALITY + Vision** (`flow: xtls-rprx-vision`)
 - **XHTTP** transport, **uTLS** fingerprints
-- **Mux**, domain sniffing, DoH DNS, FakeDNS
+- **Mux**, domain sniffing, DoH DNS (through tunnel), optional FakeDNS
 - Routing: Global · Bypass LAN · custom **direct domains** (wildcards)
 - TLS fragment (anti-DPI)
 - Quick Setup wizard, multi-select servers, subscriptions (traffic / expiry when provided)
 - Session limits, keep-alive, optional **LAN proxy** for other devices
+- Dual-accent **glass UI** (primary + secondary colors, compact custom HSV picker)
+- Shield connect control; connected only after public IP + country resolve
+- **In-app updates** from [GitHub Releases](https://github.com/davoodtaba-glitch/Bla-Vpn-pulse-/releases) + dashboard **NEW** badge
 - Persian (فارسی) default UI + English
 - Share-link import: `vless://`, `vmess://`, `trojan://`, `ss://`, subscription URLs
 
@@ -51,12 +54,17 @@ A modern **Android Xray client** with Material 3 UI. Supports the same core feat
 
 ### Screens (overview)
 
-- **Home** — connect button, stats, quick test, subscription bars  
+- **Home** — shield connect, speeds, IP/country, update badge, subscription card  
 - **Servers** — search, tabs per subscription, multi-select, latency  
 - **Import** — links / multi-line paste, QR, manual VLESS  
 - **Subscriptions** — refresh, rename, traffic / expire  
-- **Settings** — routing, ports, fragment, language, limits, help  
+- **Settings** — routing, DNS presets, fragment, dual colors, language, About (update)  
 - **Quick setup** — guided import / color / limits / language  
+
+### Latest release
+
+Install from **[Releases](https://github.com/davoodtaba-glitch/Bla-Vpn-pulse-/releases/latest)** (current: **v1.38+**).  
+Inside the app: **Settings → About → Check for updates**, or use the home **NEW** badge when a newer build is published.
 
 ---
 
@@ -197,11 +205,14 @@ Use only with servers and networks you are authorized to access.
 
 - **VLESS + REALITY + Vision**
 - ترنسپورت **XHTTP** و اثرانگشت **uTLS**
-- **Mux**، sniffing دامنه، DoH و FakeDNS
+- **Mux**، sniffing دامنه، DoH از داخل تونل، FakeDNS اختیاری
 - مسیریابی: Global · Bypass LAN · **دامنه‌های مستقیم** (با وایلدکارد)
 - TLS fragment (ضد DPI)
-- راه‌اندازی سریع، انتخاب چندتایی سرور، اشتراک (ترافیک / انقضا در صورت پشتیبانی ارائه‌دهنده)
-- محدودیت نشست، Keep-alive، امکان **استفاده دستگاه‌های LAN از پروکسی**
+- راه‌اندازی سریع، انتخاب چندتایی سرور، اشتراک (ترافیک / انقضا)
+- محدودیت نشست، Keep-alive، پروکسی LAN
+- ظاهر شیشه‌ای با **دو رنگ** (انتخاب سفارشی فقط با ضربه روی Custom)
+- دکمه سپر؛ وضعیت «متصل» پس از دریافت IP و کشور
+- **به‌روزرسانی داخل اپ** از [GitHub Releases](https://github.com/davoodtaba-glitch/Bla-Vpn-pulse-/releases) و نشان **جدید** در خانه
 - زبان پیش‌فرض **فارسی** + English
 - ورود لینک: `vless://`، `vmess://`، `trojan://`، `ss://` و URL اشتراک
 
@@ -234,12 +245,17 @@ Use only with servers and networks you are authorized to access.
 
 ## صفحات اپ
 
-- **خانه** — دکمه اتصال، آمار، تست سریع، نوار اشتراک  
+- **خانه** — سپر اتصال، سرعت، IP/کشور، نشان به‌روزرسانی، کارت اشتراک  
 - **سرورها** — جستجو، تب هر اشتراک، انتخاب چندتایی، تأخیر  
 - **ورود** — چسباندن لینک، QR، VLESS دستی  
 - **اشتراک‌ها** — به‌روزرسانی، تغییر نام، ترافیک / انقضا  
-- **تنظیمات** — مسیریابی، پورت‌ها، fragment، زبان، محدودیت، راهنما  
+- **تنظیمات** — مسیریابی، DNS، fragment، دو رنگ، زبان، درباره (آپدیت)  
 - **راه‌اندازی سریع** — ورود هدایت‌شده / رنگ / محدودیت / زبان  
+
+### آخرین نسخه
+
+از **[Releases](https://github.com/davoodtaba-glitch/Bla-Vpn-pulse-/releases/latest)** نصب کنید.  
+در اپ: **تنظیمات → درباره → بررسی به‌روزرسانی** یا نشان **جدید** در صفحه خانه.
 
 ---
 

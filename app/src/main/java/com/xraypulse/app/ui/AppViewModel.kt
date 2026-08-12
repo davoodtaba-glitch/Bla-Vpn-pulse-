@@ -13,11 +13,16 @@ import com.xraypulse.app.data.model.Subscription
 import com.xraypulse.app.data.repository.ServerRepository
 import com.xraypulse.app.data.repository.SettingsRepository
 import com.xraypulse.app.service.XrayVpnService
+import com.xraypulse.app.util.AppUpdater
+import com.xraypulse.app.util.UpdateCheckResult
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 data class UiState(
@@ -31,7 +36,9 @@ data class UiState(
     val isTesting: Boolean = false,
     val testingServerId: Long? = null,
     val coreVersion: String = "",
-    val searchQuery: String = ""
+    val searchQuery: String = "",
+    /** Non-null when GitHub has a newer APK (version label for badge). */
+    val updateAvailableVersion: String? = null
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -44,6 +51,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _search = MutableStateFlow("")
     private val _isTesting = MutableStateFlow(false)
     private val _testingServerId = MutableStateFlow<Long?>(null)
+    private val _updateAvailableVersion = MutableStateFlow<String?>(null)
+    private var testJob: Job? = null
     /** Bumps when custom i18n JSON is imported so UI reloads strings. */
     private val _customI18nTick = MutableStateFlow(0)
     val customI18nTick: StateFlow<Int> = _customI18nTick
@@ -61,7 +70,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val busy: Boolean,
         val search: String,
         val isTesting: Boolean,
-        val testingServerId: Long?
+        val testingServerId: Long?,
+        val updateAvailableVersion: String?
     )
 
     private val coreFlow = combine(
@@ -74,10 +84,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         CoreUi(servers, subs, selected, settings, conn)
     }
 
-    private val metaFlow = combine(
+    private val metaBaseFlow = combine(
         _message, _busy, _search, _isTesting, _testingServerId
     ) { msg, busy, search, testing, testingId ->
-        MetaUi(msg, busy, search, testing, testingId)
+        MetaUi(msg, busy, search, testing, testingId, updateAvailableVersion = null)
+    }
+
+    private val metaFlow = combine(metaBaseFlow, _updateAvailableVersion) { meta, updateVer ->
+        meta.copy(updateAvailableVersion = updateVer)
     }
 
     val uiState: StateFlow<UiState> = combine(coreFlow, metaFlow) { core, meta ->
@@ -102,12 +116,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             isTesting = meta.isTesting,
             testingServerId = meta.testingServerId,
             coreVersion = XrayController.version(),
-            searchQuery = meta.search
+            searchQuery = meta.search,
+            updateAvailableVersion = meta.updateAvailableVersion
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UiState())
 
     init {
         XrayController.initEnv(app)
+        checkForAppUpdate()
+    }
+
+    /** Quiet background check for dashboard badge (GitHub latest release). */
+    fun checkForAppUpdate() = viewModelScope.launch {
+        delay(2_500) // let UI settle; don't block startup
+        try {
+            when (val result = AppUpdater.checkLatest()) {
+                is UpdateCheckResult.Available ->
+                    _updateAvailableVersion.value = result.release.versionName
+                is UpdateCheckResult.UpToDate ->
+                    _updateAvailableVersion.value = null
+                is UpdateCheckResult.Error -> {
+                    // Silent — no badge on network/API failure
+                }
+            }
+        } catch (_: Exception) {
+            // ignore
+        }
     }
 
     fun setSearch(q: String) { _search.value = q }
@@ -137,21 +171,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         toast("Deleted $n configs")
     }
 
-    fun deleteInvalidServers() = viewModelScope.launch {
-        _isTesting.value = true
-        toast("Testing connections…")
-        try {
-            val settings = uiState.value.settings
-            serversRepo.getAll().forEach { s ->
-                _testingServerId.value = s.id
-                val ms = serversRepo.testLatency(s, settings)
-                if (ms < 0) serversRepo.markInvalid(s.id)
+    fun deleteInvalidServers() {
+        testJob?.cancel()
+        testJob = viewModelScope.launch {
+            _isTesting.value = true
+            toast("Testing connections…")
+            try {
+                val settings = uiState.value.settings
+                serversRepo.getAll().forEach { s ->
+                    if (!isActive) return@forEach
+                    _testingServerId.value = s.id
+                    val ms = serversRepo.testLatency(s, settings)
+                    if (ms < 0) serversRepo.markInvalid(s.id)
+                }
+                if (!isActive) return@launch
+                val n = serversRepo.deleteInvalid()
+                toast("Removed $n invalid configs")
+            } finally {
+                _isTesting.value = false
+                _testingServerId.value = null
             }
-            val n = serversRepo.deleteInvalid()
-            toast("Removed $n invalid configs")
-        } finally {
-            _isTesting.value = false
-            _testingServerId.value = null
         }
     }
 
@@ -285,12 +324,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Theme / accent apply immediately — never reconnects VPN.
+     * Theme / dual accent apply immediately — never reconnects VPN.
      * Call from appearance chips for live preview.
      */
-    fun applyAppearance(themeStyle: String, accentColor: Long) = viewModelScope.launch {
+    fun applyAppearance(
+        themeStyle: String,
+        accentColor: Long,
+        accentColorSecondary: Long? = null
+    ) = viewModelScope.launch {
         settingsRepo.update {
-            it.copy(themeStyle = "PULSE", accentColor = accentColor)
+            it.copy(
+                themeStyle = "PULSE",
+                accentColor = accentColor,
+                accentColorSecondary = accentColorSecondary ?: it.accentColorSecondary
+            )
         }
     }
 
@@ -329,34 +376,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Fields that require a VPN restart when changed. */
     private fun needsVpnRestart(prev: AppSettings, next: AppSettings): Boolean {
-        // Appearance-only changes (theme, color, language, sort)
+        // Appearance-only / keep-alive changes (no tunnel rebuild)
         if (prev.copy(
                 themeStyle = next.themeStyle,
                 accentColor = next.accentColor,
+                accentColorSecondary = next.accentColorSecondary,
                 darkTheme = next.darkTheme,
                 sortByDelay = next.sortByDelay,
                 language = next.language,
-                limitActionOnReach = next.limitActionOnReach,
                 keepAliveEnabled = next.keepAliveEnabled,
                 keepAliveIntervalMinutes = next.keepAliveIntervalMinutes
             ) == next
         ) {
             return false
         }
-        // Session limits / keep-alive can update without full reconnect if only those changed
-        val onlyLimits = prev.copy(
-            sessionTimeLimitMinutes = next.sessionTimeLimitMinutes,
-            sessionTrafficLimitMb = next.sessionTrafficLimitMb,
-            limitActionOnReach = next.limitActionOnReach,
+        val onlyKeepAlive = prev.copy(
             keepAliveEnabled = next.keepAliveEnabled,
             keepAliveIntervalMinutes = next.keepAliveIntervalMinutes,
             themeStyle = next.themeStyle,
             accentColor = next.accentColor,
+            accentColorSecondary = next.accentColorSecondary,
             darkTheme = next.darkTheme,
             sortByDelay = next.sortByDelay,
             language = next.language
         ) == next
-        if (onlyLimits) return false
+        if (onlyKeepAlive) return false
         return true
     }
 
@@ -462,33 +506,48 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         settingsRepo.update { it.copy(sortByDelay = enabled) }
     }
 
-    fun testLatency(server: ServerProfile) = viewModelScope.launch {
-        _isTesting.value = true
-        _testingServerId.value = server.id
-        toast("Testing…")
-        try {
-            val ms = serversRepo.testLatency(server, uiState.value.settings)
-            toast(if (ms >= 0) "Latency: ${ms}ms" else "Test failed")
-        } finally {
-            _isTesting.value = false
-            _testingServerId.value = null
+    fun testLatency(server: ServerProfile) {
+        testJob?.cancel()
+        testJob = viewModelScope.launch {
+            _isTesting.value = true
+            _testingServerId.value = server.id
+            toast("Testing…")
+            try {
+                val ms = serversRepo.testLatency(server, uiState.value.settings)
+                if (isActive) toast(if (ms >= 0) "Latency: ${ms}ms" else "Test failed")
+            } finally {
+                _isTesting.value = false
+                _testingServerId.value = null
+            }
         }
     }
 
-    fun testAll() = viewModelScope.launch {
-        _isTesting.value = true
-        toast("Testing connections…")
-        try {
-            val settings = uiState.value.settings
-            serversRepo.getAll().forEach { s ->
-                _testingServerId.value = s.id
-                serversRepo.testLatency(s, settings)
+    fun testAll() {
+        testJob?.cancel()
+        testJob = viewModelScope.launch {
+            _isTesting.value = true
+            toast("Testing connections…")
+            try {
+                val settings = uiState.value.settings
+                serversRepo.getAll().forEach { s ->
+                    if (!isActive) return@forEach
+                    _testingServerId.value = s.id
+                    serversRepo.testLatency(s, settings)
+                }
+                if (isActive) toast("Latency test finished")
+            } finally {
+                _isTesting.value = false
+                _testingServerId.value = null
             }
-            toast("Latency test finished")
-        } finally {
-            _isTesting.value = false
-            _testingServerId.value = null
         }
+    }
+
+    /** Stop all latency tests (call when leaving the servers/subscriptions screen). */
+    fun cancelTesting() {
+        testJob?.cancel()
+        testJob = null
+        _isTesting.value = false
+        _testingServerId.value = null
     }
 
     fun connectOrDisconnect(vpnPermissionLauncher: ActivityResultLauncher<Intent>?) {

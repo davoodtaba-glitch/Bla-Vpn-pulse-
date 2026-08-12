@@ -59,7 +59,7 @@ data class ServerProfile(
     val updatedAt: Long = System.currentTimeMillis()
 ) {
     fun displayTitle(): String =
-        remark.ifBlank { "${protocol.name.lowercase()}://$address:$port" }
+        remark.ifBlank { "${protocol.name.lowercase()}://$address" }
 
     fun subtitle(): String {
         val sec = when (security) {
@@ -124,6 +124,15 @@ data class Subscription(
         return (remaining.toFloat() / window.toFloat()).coerceIn(0f, 1f)
     }
 
+    /** Whole days remaining until expire; null if unknown; 0 if expired. */
+    fun daysRemaining(): Long? {
+        if (expireAt <= 0) return null
+        val expireMs = if (expireAt > 1_000_000_000_000L) expireAt else expireAt * 1000L
+        val remaining = expireMs - System.currentTimeMillis()
+        if (remaining <= 0) return 0L
+        return remaining / (24 * 3600_000L)
+    }
+
     fun expireLabel(): String {
         if (expireAt <= 0) return ""
         val expireMs = if (expireAt > 1_000_000_000_000L) expireAt else expireAt * 1000L
@@ -131,7 +140,9 @@ data class Subscription(
         if (remaining <= 0) return "Expired"
         val days = remaining / (24 * 3600_000L)
         val hours = (remaining % (24 * 3600_000L)) / 3600_000L
-        return if (days > 0) "${days}d ${hours}h left" else "${hours}h left"
+        // LTR isolate so digits/units stay ordered in Farsi UI
+        val body = if (days > 0) "${days}d ${hours}h left" else "${hours}h left"
+        return "\u2066$body\u2069"
     }
 }
 
@@ -148,12 +159,10 @@ data class ConnectionState(
     val errorMessage: String? = null,
     /** True when tunnel is up but no data for a while */
     val noTraffic: Boolean = false,
-    /**
-     * Limit warning for UI banner / toast.
-     * level: 0=none, 1≈80%, 2≈95%
-     */
-    val limitWarning: String? = null,
-    val limitWarningLevel: Int = 0
+    /** Public exit IP while connected (empty if unknown). */
+    val publicIp: String = "",
+    /** Country/region for public exit IP. */
+    val publicCountry: String = ""
 )
 
 enum class RoutingMode {
@@ -179,8 +188,16 @@ data class AppSettings(
     val autoConnect: Boolean = false,
     val darkTheme: Boolean = true,
     val testUrl: String = "https://www.gstatic.com/generate_204",
-    val dnsRemote: String = "https://1.1.1.1/dns-query",
-    val dnsDomestic: String = "localhost",
+    /**
+     * Primary / main DNS (IP, host:port, DoH URL, or comma-separated list).
+     * Authoritative for the VPN — no silent system/Google fallback.
+     */
+    val dnsRemote: String = "1.1.1.1",
+    /**
+     * Optional alternative DNS (IP / URL / list). Only used if non-blank and distinct.
+     * Empty = single-DNS mode (exactly [dnsRemote] only).
+     */
+    val dnsDomestic: String = "",
     val fragmentEnabled: Boolean = false,
     /** tlshello | 1-1 | 1-2 | 1-3 | 1-5 */
     val fragmentPackets: String = "tlshello",
@@ -190,25 +207,11 @@ data class AppSettings(
     val fragmentInterval: String = "1-2",
     /** e.g. 100-200 max split size; blank = core default */
     val fragmentMaxSplit: String = "",
-    /** Theme accent color as ARGB long (e.g. 0xFF00E5C3) */
-    val accentColor: Long = 0xFF00E5C3,
+    /** Primary theme accent — neon cyan/blue (power ring left, glass glow) */
+    val accentColor: Long = 0xFF00C8FF,
+    /** Secondary theme accent — neon red/pink (power ring right, Home tab) */
+    val accentColorSecondary: Long = 0xFFFF2D6A,
     val sortByDelay: Boolean = false,
-    /**
-     * Session time limit in minutes. 0 = unlimited.
-     * Progress bar uses this when > 0.
-     */
-    val sessionTimeLimitMinutes: Int = 60,
-    /**
-     * Session traffic limit in megabytes (upload + download). 0 = unlimited.
-     * Progress bar uses this when > 0.
-     */
-    val sessionTrafficLimitMb: Int = 512,
-    /**
-     * When a session limit is fully reached:
-     * "notify" = friendly notification only (default)
-     * "disconnect" = stop VPN after notification
-     */
-    val limitActionOnReach: String = "notify",
     /**
      * When VPN is connected, send a light keep-alive request through the local
      * proxy so idle tunnels stay warm. Default on.
@@ -232,14 +235,17 @@ data class AppSettings(
      */
     val themeStyle: String = "PULSE",
     /** UI language: "en" | "fa" | custom code from imported JSON. */
-    val language: String = "fa"
+    val language: String = "fa",
+    /**
+     * TUN / hev-socks5-tunnel MTU. Typical range 1280–1500. Default 1500.
+     */
+    val mtu: Int = 1500,
+    /**
+     * Optional FakeDNS. Default off — Android VPN uses real main/alt DNS IPs so leak
+     * tests and the system resolver see your chosen servers (e.g. Cloudflare).
+     */
+    val useFakeDns: Boolean = false
 )
-
-/** Common presets for session limits UI. */
-object SessionLimitPresets {
-    val TIME_MINUTES = listOf(0, 15, 30, 60, 120, 180, 360, 720)
-    val TRAFFIC_MB = listOf(0, 100, 256, 512, 1024, 2048, 5120, 10240)
-}
 
 /** Common Xray fragment "packets" presets (v2rayN-compatible). */
 object FragmentPresets {

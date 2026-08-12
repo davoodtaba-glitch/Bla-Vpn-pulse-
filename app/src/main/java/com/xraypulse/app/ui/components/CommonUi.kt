@@ -1,16 +1,28 @@
 package com.xraypulse.app.ui.components
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColor
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,41 +41,99 @@ import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckBox
 import androidx.compose.material.icons.rounded.CheckBoxOutlineBlank
 import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.GppBad
+import androidx.compose.material.icons.rounded.GppMaybe
 import androidx.compose.material.icons.rounded.LinkOff
-import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.VerifiedUser
+import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xraypulse.app.data.model.ServerProfile
 import com.xraypulse.app.ui.theme.AppThemeStyle
 import com.xraypulse.app.ui.theme.LocalAccent
+import com.xraypulse.app.ui.theme.LocalAccentSecondary
 import com.xraypulse.app.ui.theme.LocalPalette
 import com.xraypulse.app.ui.theme.LocalThemeStyle
 import com.xraypulse.app.ui.theme.ledCycleFromAccent
 import com.xraypulse.app.ui.theme.neonFamily
+
+/**
+ * Embed Latin/digits as LTR inside RTL Persian sentences.
+ * Use only for pure technical tokens (IP, "12.5 MB", "120ms") â€” never whole Persian sentences.
+ */
+fun String.ltrWrap(): String {
+    val clean = replace("\u2066", "").replace("\u2067", "").replace("\u2068", "")
+        .replace("\u2069", "").replace("\u200E", "").replace("\u200F", "")
+        .replace("\u202A", "").replace("\u202B", "").replace("\u202C", "")
+    return "\u202A$clean\u202C" // LRE â€¦ PDF
+}
+
+/**
+ * Compose Text forced LTR â€” for pure technical values only (speed, IP, version, ping).
+ * Do not use for mixed Persian sentences (that reverses the Farsi words).
+ */
+@Composable
+fun LtrText(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    fontSize: TextUnit = TextUnit.Unspecified,
+    fontWeight: FontWeight? = null,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip
+) {
+    val clean = text
+        .replace("\u2066", "").replace("\u2067", "").replace("\u2068", "")
+        .replace("\u2069", "").replace("\u202A", "").replace("\u202B", "")
+        .replace("\u202C", "").replace("\u200E", "").replace("\u200F", "")
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Text(
+            text = clean,
+            modifier = modifier,
+            color = color,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            maxLines = maxLines,
+            overflow = overflow,
+            style = TextStyle(textDirection = TextDirection.Ltr)
+        )
+    }
+}
 
 @Composable
 fun GlassCard(
@@ -74,126 +144,95 @@ fun GlassCard(
 ) {
     val p = LocalPalette.current
     val accent = LocalAccent.current
-    val style = LocalThemeStyle.current
-    val cyber = style == AppThemeStyle.CYBERPUNK
-    val rgb = style == AppThemeStyle.RGB
-    val vivid = cyber || rgb
-    val shape = RoundedCornerShape(if (vivid) 18.dp else 20.dp)
-    val family = remember(accent) { accent.neonFamily() }
-    val ledCycle = remember(accent) { accent.ledCycleFromAccent() }
-    val infinite = rememberInfiniteTransition(label = "frameGlow")
-
-    val phase by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(if (rgb) 2200 else 2800, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "phase"
-    )
-    val glowPulse by infinite.animateFloat(
-        initialValue = 0.55f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Reverse),
-        label = "glowPulse"
-    )
-    val c1 by infinite.animateColor(
-        initialValue = family[0],
-        targetValue = family[1],
-        animationSpec = infiniteRepeatable(tween(1600, easing = LinearEasing), RepeatMode.Reverse),
-        label = "c1"
-    )
-    val c2 by infinite.animateColor(
-        initialValue = family[1],
-        targetValue = family[2],
-        animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "c2"
-    )
-    val c3 by infinite.animateColor(
-        initialValue = family[2],
-        targetValue = family[3],
-        animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Reverse),
-        label = "c3"
-    )
-
-    val borderBrush = when {
-        rgb -> {
-            val shift = phase
-            Brush.linearGradient(
-                colors = ledCycle,
-                start = Offset(shift * 600f, 0f),
-                end = Offset(600f - shift * 600f, 400f)
-            )
-        }
-        cyber -> {
-            val shift = phase
-            Brush.linearGradient(
-                colors = listOf(
-                    c1.copy(alpha = glowPulse),
-                    c2,
-                    c3.copy(alpha = glowPulse),
-                    family[0]
-                ),
-                start = Offset(0f, shift * 480f),
-                end = Offset(480f, 480f - shift * 480f)
-            )
-        }
-        else -> Brush.linearGradient(listOf(p.border, accent.copy(alpha = 0.45f), p.border))
-    }
-
-    val glowColor = when {
-        highlighted -> accent
-        rgb -> ledCycle[((phase * (ledCycle.size - 1)).toInt()).coerceIn(0, ledCycle.lastIndex)]
-        cyber -> c1
-        else -> p.border
-    }
-    val cardBg = when {
-        highlighted && vivid -> Brush.verticalGradient(
-            listOf(
-                accent.copy(alpha = 0.22f),
-                p.card.copy(alpha = 0.96f),
-                accent.copy(alpha = 0.10f)
-            )
+    val shape = RoundedCornerShape(22.dp)
+    val borderColor = if (highlighted) accent.copy(alpha = 0.55f) else p.border.copy(alpha = 0.55f)
+    val cardBg = Brush.verticalGradient(
+        listOf(
+            Color(0xE0182438),
+            p.card.copy(alpha = 0.92f),
+            Color(0xD00C1424)
         )
-        vivid -> Brush.verticalGradient(
-            listOf(p.card.copy(alpha = 0.96f), Color(0xE0081018))
-        )
-        else -> Brush.linearGradient(listOf(p.card, p.card))
-    }
+    )
 
     Box(
         modifier = modifier
             .shadow(
-                elevation = if (vivid) (if (highlighted) 20.dp else 14.dp) else 2.dp,
+                elevation = if (highlighted) 12.dp else 6.dp,
                 shape = shape,
-                ambientColor = glowColor.copy(alpha = if (highlighted) 0.55f else 0.28f),
-                spotColor = glowColor.copy(alpha = if (highlighted) 0.50f else 0.22f)
+                ambientColor = (if (highlighted) accent else p.blue).copy(alpha = 0.18f),
+                spotColor = (if (highlighted) accent else p.cyan).copy(alpha = 0.12f)
             )
-            .drawBehind {
-                val stroke = when {
-                    highlighted -> 2.5.dp.toPx()
-                    vivid -> 2.dp.toPx()
-                    else -> 1.2.dp.toPx()
-                }
-                if (vivid || highlighted) {
-                    drawRoundRect(
-                        color = glowColor.copy(alpha = if (highlighted) 0.35f else 0.18f * glowPulse),
-                        style = Stroke(width = stroke + 6.dp.toPx()),
-                        cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx())
-                    )
-                }
-                drawRoundRect(
-                    brush = borderBrush,
-                    style = Stroke(width = stroke),
-                    cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx())
-                )
-            }
             .clip(shape)
             .background(cardBg)
+            .border(
+                width = 1.dp,
+                brush = Brush.linearGradient(
+                    listOf(
+                        borderColor.copy(alpha = 0.85f),
+                        accent.copy(alpha = if (highlighted) 0.35f else 0.12f),
+                        borderColor.copy(alpha = 0.4f)
+                    )
+                ),
+                shape = shape
+            )
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
     ) {
         content()
+    }
+}
+
+/** Premium action row used on Home (quick test / quick setup). */
+@Composable
+fun GlassActionRow(
+    title: String,
+    subtitle: String? = null,
+    icon: ImageVector,
+    iconTint: Color,
+    enabled: Boolean = true,
+    highlighted: Boolean = false,
+    onClick: () -> Unit
+) {
+    val p = LocalPalette.current
+    GlassCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = if (enabled) onClick else null,
+        highlighted = highlighted
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 15.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(iconTint.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(22.dp))
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    color = if (enabled) p.text else p.muted,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp
+                )
+                if (!subtitle.isNullOrBlank()) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(subtitle, color = p.muted, fontSize = 12.sp)
+                }
+            }
+            Icon(
+                Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = p.muted.copy(alpha = 0.8f),
+                modifier = Modifier.size(22.dp)
+            )
+        }
     }
 }
 
@@ -218,9 +257,9 @@ fun ProtocolChip(label: String, accent: Color? = null) {
 fun LatencyBadge(ms: Long, testing: Boolean = false) {
     val p = LocalPalette.current
     val (color, text) = when {
-        testing -> p.warning to "Testing…"
-        ms == -2L -> p.error to "Invalid"
-        ms < 0 -> p.muted to "—"
+        testing -> p.warning to "â€¦"
+        ms == -2L -> p.error to "!"
+        ms < 0 -> p.muted to "â€”"
         ms < 100 -> p.success to "${ms}ms"
         ms < 300 -> p.warning to "${ms}ms"
         else -> p.error to "${ms}ms"
@@ -233,7 +272,7 @@ fun LatencyBadge(ms: Long, testing: Boolean = false) {
             modifier = Modifier.size(14.dp)
         )
         Spacer(Modifier.width(4.dp))
-        Text(text, color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        LtrText(text = text, color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -254,10 +293,16 @@ fun ServerListItem(
     val p = LocalPalette.current
     val family = remember(accent) { accent.neonFamily() }
     val highlight = selected || checked
+    // Active server uses a stronger accent treatment so it stands out in the list
+    val activeBg = if (selected && !multiSelect) accent.copy(alpha = 0.10f) else null
 
     GlassCard(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (activeBg != null) Modifier.background(activeBg, RoundedCornerShape(20.dp))
+                else Modifier
+            )
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         highlighted = highlight
     ) {
@@ -336,8 +381,8 @@ fun ServerListItem(
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "${server.address}:${server.port}",
+                LtrText(
+                    text = server.address,
                     color = if (highlight) accent.copy(alpha = 0.85f) else p.muted,
                     fontSize = 12.sp,
                     maxLines = 1,
@@ -459,166 +504,429 @@ fun PowerButton(
     modifier: Modifier = Modifier
 ) {
     val accent = LocalAccent.current
+    val accent2 = LocalAccentSecondary.current
     val p = LocalPalette.current
-    val style = LocalThemeStyle.current
-    val cyber = style == AppThemeStyle.CYBERPUNK
-    val rgb = style == AppThemeStyle.RGB
-    val vivid = cyber || rgb
-    val family = remember(accent) { accent.neonFamily() }
-    val led = remember(accent) { accent.ledCycleFromAccent() }
-    val infinite = rememberInfiniteTransition(label = "pulse")
-    val scale by infinite.animateFloat(
-        initialValue = 1f,
-        targetValue = if (connected || connecting) 1.06f else 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(if (noTraffic) 600 else 1400, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "scale"
-    )
-    val rgbPhase by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(2800, easing = LinearEasing), RepeatMode.Restart),
-        label = "rgbPhase"
-    )
-    val neonA by infinite.animateColor(
-        initialValue = family[0],
-        targetValue = family[1],
-        animationSpec = infiniteRepeatable(tween(1600), RepeatMode.Reverse),
-        label = "neonA"
-    )
-    val neonB by infinite.animateColor(
-        initialValue = family[2],
-        targetValue = family[3],
-        animationSpec = infiniteRepeatable(tween(2000), RepeatMode.Reverse),
-        label = "neonB"
-    )
-    val ledIdx = ((rgbPhase * (led.size - 1)).toInt()).coerceIn(0, led.lastIndex)
-    val rgbA = led[ledIdx]
-    val rgbB = led[(ledIdx + 3) % led.size]
+    val infinite = rememberInfiniteTransition(label = "power")
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
 
-    val targetGlow = when {
+    val isOn = connected && !noTraffic
+    val active = connected || connecting
+
+    // Smooth state colors
+    val leftTarget = when {
         connecting -> p.warning
         connected && noTraffic -> p.error
-        connected && rgb -> rgbA
-        connected && cyber -> neonA
         connected -> accent
-        else -> Color(0xFF3A4560)
+        else -> Color(0xFF3A4A68)
     }
-    val glow by animateColorAsState(targetGlow, tween(450), label = "glow")
-
-    val ringOuter = when {
-        connecting -> p.warning.copy(0.28f)
-        connected && noTraffic -> p.error.copy(0.32f)
-        connected && rgb -> rgbA.copy(0.28f)
-        connected && cyber -> neonA.copy(0.30f)
-        connected -> accent.copy(0.20f)
-        else -> Color(0xFF1A2030)
+    val rightTarget = when {
+        connecting -> Color(0xFFFFB04A)
+        connected && noTraffic -> Color(0xFFE53935)
+        connected -> accent2
+        else -> Color(0xFF2A3548)
     }
-    val ringMid = when {
-        connecting -> p.warning.copy(0.40f)
-        connected && noTraffic -> p.error.copy(0.45f)
-        connected && rgb -> rgbB.copy(0.38f)
-        connected && cyber -> neonB.copy(0.38f)
-        connected -> accent.copy(0.30f)
-        else -> Color(0xFF252D42)
-    }
-    // Modern RGB: rotating multi-stop sweep anchored on accent color picker
-    val rgbSweep = remember(led) {
-        val doubled = led + led.first()
-        doubled
-    }
-    val centerBrush = when {
-        connecting -> Brush.linearGradient(listOf(p.warning, Color(0xFFFF8A3D)))
-        connected && noTraffic -> Brush.linearGradient(listOf(p.error, Color(0xFFB00020)))
-        connected && rgb -> Brush.radialGradient(
-            colors = listOf(
-                rgbA.copy(0.95f),
-                accent.copy(0.55f),
-                Color(0xFF0A0A12)
+    val leftColor by animateColorAsState(
+        leftTarget,
+        tween(420, easing = FastOutSlowInEasing),
+        label = "leftC"
+    )
+    val rightColor by animateColorAsState(
+        rightTarget,
+        tween(420, easing = FastOutSlowInEasing),
+        label = "rightC"
+    )
+    val iconTint by animateColorAsState(
+        when {
+            connecting -> p.warning
+            connected && noTraffic -> p.error
+            connected -> Color(
+                red = (accent.red * 0.45f + 0.55f).coerceIn(0f, 1f),
+                green = (accent.green * 0.45f + 0.55f).coerceIn(0f, 1f),
+                blue = (accent.blue * 0.45f + 0.55f).coerceIn(0f, 1f)
             )
-        )
-        connected && cyber -> Brush.linearGradient(listOf(neonA, neonB, family[0]))
-        connected -> Brush.linearGradient(listOf(accent, p.blue))
-        else -> Brush.linearGradient(listOf(Color(0xFF2A3348), Color(0xFF1A2235)))
-    }
-    val borderBrush = when {
-        connected && rgb -> Brush.sweepGradient(rgbSweep)
-        connected && vivid -> Brush.sweepGradient(listOf(neonA, neonB, family[0], neonA))
-        else -> Brush.linearGradient(listOf(Color(0xFF4A5568), Color(0xFF4A5568)))
+            else -> Color(0xFF8A96B0)
+        },
+        tween(380, easing = FastOutSlowInEasing),
+        label = "iconTint"
+    )
+
+    // Breathing scale — soft modern pulse when active
+    val breath by infinite.animateFloat(
+        initialValue = 1f,
+        targetValue = when {
+            noTraffic && connected -> 1.045f
+            connecting -> 1.035f
+            isOn -> 1.028f
+            else -> 1f
+        },
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = when {
+                    noTraffic && connected -> 700
+                    connecting -> 1100
+                    isOn -> 2200
+                    else -> 3000
+                },
+                easing = FastOutSlowInEasing
+            ),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "breath"
+    )
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.94f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "press"
+    )
+    val ringRotation by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            tween(
+                durationMillis = when {
+                    connecting -> 1400
+                    isOn -> 10000
+                    else -> 16000
+                },
+                easing = LinearEasing
+            ),
+            RepeatMode.Restart
+        ),
+        label = "ringRot"
+    )
+    // Counter-rotating secondary ring for depth
+    val ringRotation2 by infinite.animateFloat(
+        initialValue = 360f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            tween(if (connecting) 2200 else 14000, easing = LinearEasing),
+            RepeatMode.Restart
+        ),
+        label = "ringRot2"
+    )
+    val glowPulse by infinite.animateFloat(
+        initialValue = if (isOn || connecting) 0.68f else 0.5f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(if (connecting) 900 else if (isOn) 1600 else 2400, easing = FastOutSlowInEasing),
+            RepeatMode.Reverse
+        ),
+        label = "glowPulse"
+    )
+    // Connecting: subtle shield rock / idle: none
+    val iconBob by infinite.animateFloat(
+        initialValue = if (connecting) -4f else 0f,
+        targetValue = if (connecting) 4f else 0f,
+        animationSpec = infiniteRepeatable(
+            tween(900, easing = FastOutSlowInEasing),
+            RepeatMode.Reverse
+        ),
+        label = "iconBob"
+    )
+    val iconAlpha by infinite.animateFloat(
+        initialValue = if (connecting) 0.72f else 1f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(if (connecting) 700 else 2000, easing = FastOutSlowInEasing),
+            RepeatMode.Reverse
+        ),
+        label = "iconAlpha"
+    )
+
+    val outer = 260.dp
+    val disc = 188.dp
+    val iconSz = 70.dp
+
+    val iconVector = when {
+        connected && noTraffic -> Icons.Rounded.GppBad
+        connecting -> Icons.Rounded.GppMaybe
+        connected -> Icons.Rounded.VerifiedUser
+        else -> Icons.Rounded.Shield
     }
 
-    val outer = 300.dp
-    val mid = 248.dp
-    val center = 196.dp
-    val icon = 84.dp
     Box(
         modifier = modifier
             .size(outer)
-            .scale(if (connected || connecting) scale else 1f),
+            .graphicsLayer {
+                val s = breath * pressScale
+                scaleX = s
+                scaleY = s
+            },
         contentAlignment = Alignment.Center
     ) {
-        // Outer soft aura
-        Box(Modifier.size(outer).clip(CircleShape).background(ringOuter))
-        // Mid ring with optional rotating LED edge
+        // Ambient bloom
         Box(
             Modifier
-                .size(mid)
+                .size(if (isOn || connecting) outer * 1.14f else outer)
                 .clip(CircleShape)
-                .background(ringMid)
-                .then(
-                    if (connected && rgb) {
-                        Modifier.border(
-                            width = 3.dp,
-                            brush = Brush.sweepGradient(rgbSweep),
-                            shape = CircleShape
-                        )
-                    } else Modifier
+                .background(
+                    Brush.radialGradient(
+                        colors = when {
+                            isOn -> listOf(
+                                leftColor.copy(alpha = 0.42f * glowPulse),
+                                rightColor.copy(alpha = 0.26f * glowPulse),
+                                leftColor.copy(alpha = 0.10f),
+                                Color.Transparent
+                            )
+                            connecting -> listOf(
+                                leftColor.copy(alpha = 0.30f * glowPulse),
+                                rightColor.copy(alpha = 0.18f * glowPulse),
+                                Color.Transparent
+                            )
+                            else -> listOf(
+                                leftColor.copy(alpha = 0.07f),
+                                Color.Transparent
+                            )
+                        }
+                    )
                 )
         )
-        Box(
-            Modifier
-                .size(center)
-                .shadow(
-                    elevation = if (connected) (if (rgb) 36.dp else 28.dp) else 6.dp,
-                    shape = CircleShape,
-                    ambientColor = glow.copy(if (rgb) 0.75f else 1f),
-                    spotColor = glow
-                )
-                .clip(CircleShape)
-                .background(centerBrush)
-                .then(
-                    if (!connected) {
-                        Modifier.border(3.dp, Color(0xFF4A5568), CircleShape)
-                    } else if (noTraffic) {
-                        Modifier.border(4.dp, p.error.copy(0.8f), CircleShape)
-                    } else {
-                        Modifier.border(
-                            width = if (rgb) 4.dp else 3.dp,
-                            brush = borderBrush,
-                            shape = CircleShape
+
+        // Core glow under disc
+        if (isOn || connecting) {
+            Box(
+                Modifier
+                    .size(disc * 1.22f)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            listOf(
+                                leftColor.copy(alpha = (if (isOn) 0.52f else 0.32f) * glowPulse),
+                                rightColor.copy(alpha = (if (isOn) 0.30f else 0.18f) * glowPulse),
+                                Color.Transparent
+                            )
                         )
-                    }
-                )
-                .clickable(enabled = !connecting, onClick = onClick),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = when {
-                    connected && noTraffic -> Icons.Rounded.CloudOff
-                    connected -> Icons.Rounded.PowerSettingsNew
-                    else -> Icons.Rounded.LinkOff
-                },
-                contentDescription = if (connected) "Disconnect" else "Connect",
-                tint = when {
-                    connected && rgb -> Color.White
-                    connected -> Color.White
-                    else -> Color(0xFF9AA3B5)
-                },
-                modifier = Modifier.size(icon)
+                    )
             )
         }
+
+        // Outer dual-tone ring (primary direction)
+        Box(
+            Modifier
+                .size(outer * 0.94f)
+                .rotate(if (active) ringRotation else -18f)
+                .drawBehind {
+                    val stroke = size.minDimension * (if (isOn) 0.016f else if (connecting) 0.018f else 0.013f)
+                    val pad = stroke * 2.4f
+                    val arcSize = Size(size.width - pad * 2, size.height - pad * 2)
+                    val tl = Offset(pad, pad)
+                    val cx = size.width / 2f
+                    val cy = size.height / 2f
+                    val r = size.minDimension / 2f
+
+                    if (isOn || connecting) {
+                        drawCircle(
+                            color = leftColor.copy(alpha = 0.18f * glowPulse),
+                            radius = r * 0.93f,
+                            center = Offset(cx, cy),
+                            style = Stroke(width = stroke * 1.5f)
+                        )
+                    }
+
+                    drawArc(
+                        color = Color.White.copy(if (isOn) 0.10f else 0.05f),
+                        startAngle = 0f,
+                        sweepAngle = 360f,
+                        useCenter = false,
+                        topLeft = tl,
+                        size = arcSize,
+                        style = Stroke(width = stroke * 0.4f)
+                    )
+                    drawArc(
+                        brush = Brush.sweepGradient(
+                            listOf(
+                                leftColor.copy(0.15f),
+                                leftColor,
+                                leftColor.copy(if (isOn) 0.95f else 0.7f),
+                                leftColor.copy(0.2f),
+                                leftColor.copy(0.15f)
+                            )
+                        ),
+                        startAngle = 140f,
+                        sweepAngle = if (active) 210f else 140f,
+                        useCenter = false,
+                        topLeft = tl,
+                        size = arcSize,
+                        style = Stroke(width = stroke, cap = StrokeCap.Round)
+                    )
+                    // Fine ticks
+                    val ticks = 40
+                    for (i in 0 until ticks) {
+                        val a = Math.toRadians(i * 360.0 / ticks - 90.0)
+                        val major = i % 5 == 0
+                        val outerR = r * 0.89f
+                        val innerR = if (major) r * 0.845f else r * 0.865f
+                        drawLine(
+                            color = if (isOn && major) leftColor.copy(0.55f * glowPulse)
+                            else Color.White.copy(if (major) 0.20f else 0.08f),
+                            start = Offset(
+                                cx + (innerR * kotlin.math.cos(a)).toFloat(),
+                                cy + (innerR * kotlin.math.sin(a)).toFloat()
+                            ),
+                            end = Offset(
+                                cx + (outerR * kotlin.math.cos(a)).toFloat(),
+                                cy + (outerR * kotlin.math.sin(a)).toFloat()
+                            ),
+                            strokeWidth = if (major) 1.15f else 0.65f,
+                            cap = StrokeCap.Round
+                        )
+                    }
+                }
+        )
+
+        // Inner counter-rotating arc (secondary accent)
+        Box(
+            Modifier
+                .size(outer * 0.82f)
+                .rotate(if (active) ringRotation2 else 25f)
+                .drawBehind {
+                    val stroke = size.minDimension * 0.012f
+                    val pad = stroke * 2.5f
+                    val arcSize = Size(size.width - pad * 2, size.height - pad * 2)
+                    val tl = Offset(pad, pad)
+                    drawArc(
+                        brush = Brush.sweepGradient(
+                            listOf(
+                                rightColor.copy(0.1f),
+                                rightColor.copy(if (isOn || connecting) 0.95f else 0.55f),
+                                rightColor.copy(0.15f),
+                                rightColor.copy(0.1f)
+                            )
+                        ),
+                        startAngle = -30f,
+                        sweepAngle = if (active) 160f else 100f,
+                        useCenter = false,
+                        topLeft = tl,
+                        size = arcSize,
+                        style = Stroke(width = stroke, cap = StrokeCap.Round)
+                    )
+                }
+        )
+
+        // Glass disc
+        Box(
+            Modifier
+                .size(disc)
+                .shadow(
+                    elevation = when {
+                        isOn -> 32.dp
+                        connecting -> 20.dp
+                        else -> 8.dp
+                    },
+                    shape = CircleShape,
+                    ambientColor = leftColor.copy(if (isOn) 0.88f else 0.4f),
+                    spotColor = rightColor.copy(if (isOn) 0.72f else 0.28f)
+                )
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        colors = if (isOn) {
+                            listOf(
+                                Color(
+                                    red = (0.20f + leftColor.red * 0.42f).coerceIn(0f, 1f),
+                                    green = (0.24f + leftColor.green * 0.38f).coerceIn(0f, 1f),
+                                    blue = (0.34f + leftColor.blue * 0.42f).coerceIn(0f, 1f)
+                                ),
+                                Color(0xFF0E1830),
+                                Color(0xFF060A12)
+                            )
+                        } else if (connecting) {
+                            listOf(
+                                Color(0xFF2A2210),
+                                Color(0xFF141018),
+                                Color(0xFF08060C)
+                            )
+                        } else {
+                            listOf(
+                                Color(0xFF1A2438),
+                                Color(0xFF0C1424),
+                                Color(0xFF070B14)
+                            )
+                        }
+                    )
+                )
+                .border(
+                    width = if (isOn) 1.25.dp else 1.dp,
+                    brush = Brush.sweepGradient(
+                        listOf(
+                            leftColor.copy(if (isOn) 1f else 0.7f),
+                            Color.White.copy(if (isOn) 0.42f else 0.10f),
+                            rightColor.copy(if (isOn || connecting) 0.95f else 0.55f),
+                            leftColor.copy(if (isOn) 1f else 0.7f)
+                        )
+                    ),
+                    shape = CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isOn) {
+                Box(
+                    Modifier
+                        .size(iconSz * 1.55f)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.radialGradient(
+                                listOf(
+                                    leftColor.copy(alpha = 0.50f * glowPulse),
+                                    rightColor.copy(alpha = 0.22f * glowPulse),
+                                    Color.Transparent
+                                )
+                            )
+                        )
+                )
+            }
+            AnimatedContent(
+                targetState = iconVector,
+                transitionSpec = {
+                    (fadeIn(tween(220)) + scaleIn(
+                        initialScale = 0.82f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMediumLow
+                        )
+                    )) togetherWith (fadeOut(tween(160)) + scaleOut(targetScale = 0.88f))
+                },
+                label = "shieldIcon"
+            ) { icon ->
+                Icon(
+                    imageVector = icon,
+                    contentDescription = when {
+                        connecting -> "Connecting"
+                        connected -> "Protected — tap to disconnect"
+                        else -> "Connect"
+                    },
+                    tint = iconTint.copy(alpha = iconAlpha),
+                    modifier = Modifier
+                        .size(iconSz)
+                        .graphicsLayer {
+                            rotationZ = iconBob
+                            // Connected: slight continuous scale shimmer on icon
+                            val iconScale = if (isOn) 0.97f + 0.03f * glowPulse else 1f
+                            scaleX = iconScale
+                            scaleY = iconScale
+                        }
+                )
+            }
+        }
+
+        // Hit target + modern ripple
+        Box(
+            Modifier
+                .size(outer * 0.94f)
+                .clip(CircleShape)
+                .clickable(
+                    interactionSource = interaction,
+                    indication = rememberRipple(
+                        bounded = true,
+                        color = leftColor.copy(alpha = 0.35f)
+                    ),
+                    onClick = onClick
+                )
+        )
     }
 }
 

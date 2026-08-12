@@ -19,25 +19,44 @@ object ShareLinkParser {
         val trimmed = content.trim()
         if (trimmed.isEmpty()) return emptyList()
 
-        // Try base64 subscription body
+        // Try base64 subscription body (whole blob)
         val decoded = tryBase64Decode(trimmed)
         val body = decoded ?: trimmed
 
-        val lines = body
-            .replace("\r\n", "\n")
-            .replace('\r', '\n')
-            .split('\n')
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("#") }
-
         val result = mutableListOf<ServerProfile>()
-        for (line in lines) {
+
+        // Prefer scanning for known schemes even if the line has noise around them
+        val schemeScan = Regex(
+            """(?i)((?:vless|vmess|trojan|ss|socks5?|socks)://[^\s<>"']+)"""
+        )
+        for (m in schemeScan.findAll(body)) {
             try {
-                parseSingle(line)?.let { result += it }
+                parseSingle(m.groupValues[1].trim())?.let { result += it }
             } catch (_: Exception) {
-                // skip bad lines
+                // ignore invalid match
             }
         }
+
+        // Line-by-line fallback (skips unrelated / invalid lines)
+        if (result.isEmpty()) {
+            val lines = body
+                .replace("\r\n", "\n")
+                .replace('\r', '\n')
+                .split('\n')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("#") }
+
+            for (line in lines) {
+                try {
+                    // Strip leading junk before a scheme
+                    val cleaned = schemeScan.find(line)?.value ?: line
+                    parseSingle(cleaned)?.let { result += it }
+                } catch (_: Exception) {
+                    // skip bad lines — never abort the whole import
+                }
+            }
+        }
+
         // Single full JSON config
         if (result.isEmpty() && (trimmed.startsWith("{") || body.startsWith("{"))) {
             parseCustomJson(if (trimmed.startsWith("{")) trimmed else body)?.let { result += it }

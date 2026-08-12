@@ -11,31 +11,48 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AddCircle
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.Storage
-import androidx.compose.material3.Icon
+import androidx.compose.material.icons.rounded.Subscriptions
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -61,7 +78,6 @@ import com.xraypulse.app.ui.screens.QrScanActivity
 import com.xraypulse.app.ui.screens.QuickSetupScreen
 import com.xraypulse.app.ui.screens.ServersScreen
 import com.xraypulse.app.ui.screens.SettingsScreen
-import com.xraypulse.app.ui.screens.SubscriptionsScreen
 import com.xraypulse.app.ui.theme.LocalAccent
 import com.xraypulse.app.ui.theme.PulseMuted
 import com.xraypulse.app.ui.theme.XrayPulseTheme
@@ -92,7 +108,8 @@ class MainActivity : ComponentActivity() {
             XrayPulseTheme(
                 darkTheme = state.settings.darkTheme,
                 themeStyle = com.xraypulse.app.ui.theme.toAppThemeStyle(state.settings.themeStyle),
-                accentArgb = state.settings.accentColor
+                accentArgb = state.settings.accentColor,
+                accentSecondaryArgb = state.settings.accentColorSecondary
             ) {
                 CompositionLocalProvider(
                     LocalStrings provides strings,
@@ -128,63 +145,120 @@ class MainActivity : ComponentActivity() {
                         vm.clearMessage()
                     }
                 }
-                // Warn when approaching session limits (toast once per threshold)
-                LaunchedEffect(state.connection.limitWarning, state.connection.limitWarningLevel) {
-                    val w = state.connection.limitWarning
-                    val lvl = state.connection.limitWarningLevel
-                    if (w != null && lvl >= 1 && state.connection.isConnected) {
-                        snackbar.showSnackbar(w)
-                    }
-                }
-
                 val tabs = listOf(
                     TabItem(Route.Home.path, t("home"), Icons.Rounded.Home),
-                    TabItem(Route.Servers.path, t("servers"), Icons.Rounded.Storage),
+                    TabItem(Route.Servers.path, t("subscriptions"), Icons.Rounded.Subscriptions),
                     TabItem(Route.Import.path, t("import"), Icons.Rounded.AddCircle),
                     TabItem(Route.Settings.path, t("settings"), Icons.Rounded.Settings)
                 )
                 val showBar = current in tabs.map { it.route }
+                var settingsDirty by remember { mutableStateOf(false) }
+                var settingsLeaveAttempt by remember { mutableIntStateOf(0) }
+                var pendingTabRoute by remember { mutableStateOf<String?>(null) }
+
+                fun navigateToTab(route: String) {
+                    nav.navigate(route) {
+                        popUpTo(nav.graph.findStartDestination().id) {
+                            saveState = true
+                        }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+
+                // Edge-to-edge is enabled; keep system bars visible and inset content.
+                // Status bar icons: light on dark theme, dark on light theme.
+                val view = LocalView.current
+                SideEffect {
+                    val window = window
+                    val controller = WindowCompat.getInsetsController(window, view)
+                    controller.isAppearanceLightStatusBars = !state.settings.darkTheme
+                    controller.isAppearanceLightNavigationBars = !state.settings.darkTheme
+                }
 
                 Scaffold(
                     containerColor = palette.bg,
-                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                    // Top (+ horizontal cutouts): push content below status bar / display cutout.
+                    // Bottom nav bar applies navigationBarsPadding itself when visible;
+                    // non-tab screens get navigationBarsPadding on the NavHost below.
+                    contentWindowInsets = WindowInsets.safeDrawing.only(
+                        WindowInsetsSides.Horizontal + WindowInsetsSides.Top
+                    ),
                     snackbarHost = { SnackbarHost(snackbar) },
                     bottomBar = {
                         if (showBar) {
-                            NavigationBar(
-                                containerColor = palette.surface,
-                                modifier = Modifier.navigationBarsPadding()
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .navigationBarsPadding()
+                                    .padding(horizontal = 14.dp, vertical = 8.dp)
                             ) {
-                                tabs.forEach { tab ->
-                                    val selected = current == tab.route
-                                    NavigationBarItem(
-                                        selected = selected,
-                                        onClick = {
-                                            nav.navigate(tab.route) {
-                                                // Always return to start of graph when switching tabs
-                                                popUpTo(nav.graph.findStartDestination().id) {
-                                                    saveState = true
-                                                }
-                                                launchSingleTop = true
-                                                restoreState = true
-                                            }
-                                        },
-                                        icon = {
-                                            com.xraypulse.app.ui.components.NeonIcon(
-                                                tab.icon,
-                                                tab.label,
-                                                size = 24.dp
-                                            )
-                                        },
-                                        label = { Text(tab.label) },
-                                        colors = NavigationBarItemDefaults.colors(
-                                            selectedIconColor = accent,
-                                            selectedTextColor = accent,
-                                            unselectedIconColor = PulseMuted,
-                                            unselectedTextColor = PulseMuted,
-                                            indicatorColor = accent.copy(alpha = 0.12f)
+                                NavigationBar(
+                                    containerColor = Color.Transparent,
+                                    tonalElevation = 0.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(64.dp)
+                                        .shadow(
+                                            elevation = 12.dp,
+                                            shape = RoundedCornerShape(24.dp),
+                                            ambientColor = accent.copy(0.15f),
+                                            spotColor = com.xraypulse.app.ui.theme.LocalAccentSecondary.current.copy(0.12f)
                                         )
-                                    )
+                                        .clip(RoundedCornerShape(24.dp))
+                                        .background(
+                                            Brush.verticalGradient(
+                                                listOf(
+                                                    palette.surface2.copy(alpha = 0.95f),
+                                                    palette.surface.copy(alpha = 0.98f)
+                                                )
+                                            )
+                                        )
+                                        .border(
+                                            width = 1.dp,
+                                            brush = Brush.linearGradient(
+                                                listOf(
+                                                    accent.copy(0.35f),
+                                                    com.xraypulse.app.ui.theme.LocalAccentSecondary.current.copy(0.25f),
+                                                    palette.border.copy(0.4f)
+                                                )
+                                            ),
+                                            shape = RoundedCornerShape(24.dp)
+                                        )
+                                ) {
+                                    val accent2 = com.xraypulse.app.ui.theme.LocalAccentSecondary.current
+                                    tabs.forEach { tab ->
+                                        val selected = current == tab.route
+                                        NavigationBarItem(
+                                            selected = selected,
+                                            onClick = {
+                                                if (tab.route == current) return@NavigationBarItem
+                                                if (current == Route.Settings.path && settingsDirty) {
+                                                    pendingTabRoute = tab.route
+                                                    settingsLeaveAttempt++
+                                                } else {
+                                                    navigateToTab(tab.route)
+                                                }
+                                            },
+                                            icon = {
+                                                com.xraypulse.app.ui.components.NeonIcon(
+                                                    tab.icon,
+                                                    tab.label,
+                                                    size = if (selected) 26.dp else 22.dp,
+                                                    tintOverride = if (selected) accent2 else PulseMuted
+                                                )
+                                            },
+                                            label = { },
+                                            alwaysShowLabel = false,
+                                            colors = NavigationBarItemDefaults.colors(
+                                                selectedIconColor = accent2,
+                                                selectedTextColor = accent2,
+                                                unselectedIconColor = PulseMuted,
+                                                unselectedTextColor = PulseMuted,
+                                                indicatorColor = accent2.copy(alpha = 0.16f)
+                                            )
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -195,6 +269,11 @@ class MainActivity : ComponentActivity() {
                         startDestination = Route.Home.path,
                         modifier = Modifier
                             .padding(padding)
+                            // Full-screen routes (no bottom tabs) still clear the gesture/nav bar
+                            .then(
+                                if (!showBar) Modifier.navigationBarsPadding()
+                                else Modifier
+                            )
                             .imePadding()
                     ) {
                         composable(Route.Home.path) {
@@ -207,6 +286,7 @@ class MainActivity : ComponentActivity() {
                                 activeSubscription = activeSub,
                                 settings = state.settings,
                                 isTesting = state.isTesting,
+                                updateAvailableVersion = state.updateAvailableVersion,
                                 onToggle = { vm.connectOrDisconnect(vpnPermission) },
                                 onOpenServers = {
                                     nav.navigate(Route.Servers.path) {
@@ -223,6 +303,15 @@ class MainActivity : ComponentActivity() {
                                         ?: vm.toast("Select a server first")
                                 },
                                 onRefreshActiveSubscription = vm::refreshActiveSubscription,
+                                onOpenUpdate = {
+                                    nav.navigate(Route.Settings.path) {
+                                        popUpTo(nav.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
                                 isBusy = state.isBusy
                             )
                         }
@@ -244,7 +333,12 @@ class MainActivity : ComponentActivity() {
                                 onTestAll = vm::testAll,
                                 onTestOne = vm::testLatency,
                                 onEdit = { id -> nav.navigate(Route.ManualEdit.create(id)) },
-                                onSortByDelay = vm::setSortByDelay
+                                onSortByDelay = vm::setSortByDelay,
+                                onCancelTesting = vm::cancelTesting,
+                                onRefreshSubscription = vm::refreshSubscription,
+                                onDeleteSubscription = vm::deleteSubscription,
+                                onRenameSubscription = vm::renameSubscription,
+                                onUpdateSubscription = vm::updateSubscription
                             )
                         }
                         composable(Route.Import.path) {
@@ -253,7 +347,7 @@ class MainActivity : ComponentActivity() {
                                 onImportMixed = { configs, subs, onDone ->
                                     vm.importMixed(configs, subs, onDone)
                                     if (subs.isNotEmpty()) {
-                                        nav.navigate(Route.Subscriptions.path)
+                                        nav.navigate(Route.Servers.path)
                                     }
                                 },
                                 onScanQr = {
@@ -262,7 +356,7 @@ class MainActivity : ComponentActivity() {
                                     )
                                 },
                                 onManual = { nav.navigate(Route.ManualEdit.create(0)) },
-                                onOpenSubscriptions = { nav.navigate(Route.Subscriptions.path) }
+                                onOpenSubscriptions = { nav.navigate(Route.Servers.path) }
                             )
                         }
                         composable(Route.Settings.path) {
@@ -272,7 +366,19 @@ class MainActivity : ComponentActivity() {
                                 onApply = vm::applySettings,
                                 onApplyAppearance = vm::applyAppearance,
                                 onApplyLanguage = vm::applyLanguage,
-                                onOpenPerApp = { nav.navigate(Route.PerApp.path) }
+                                onOpenPerApp = { nav.navigate(Route.PerApp.path) },
+                                onDirtyChange = { settingsDirty = it },
+                                leaveAttempt = settingsLeaveAttempt,
+                                onLeaveResolved = { leave ->
+                                    if (leave) {
+                                        val dest = pendingTabRoute
+                                        pendingTabRoute = null
+                                        settingsDirty = false
+                                        if (dest != null) navigateToTab(dest)
+                                    } else {
+                                        pendingTabRoute = null
+                                    }
+                                }
                             )
                         }
                         composable(Route.QuickSetup.path) {
@@ -280,10 +386,6 @@ class MainActivity : ComponentActivity() {
                                 busy = state.isBusy,
                                 onBack = { nav.popBackStack() },
                                 onOpenSettingsAppearance = {
-                                    nav.popBackStack()
-                                    nav.navigate(Route.Settings.path)
-                                },
-                                onOpenSettingsLimits = {
                                     nav.popBackStack()
                                     nav.navigate(Route.Settings.path)
                                 },
@@ -304,15 +406,6 @@ class MainActivity : ComponentActivity() {
                             PerAppProxyScreen(
                                 settings = state.settings,
                                 onUpdate = vm::updateSettings
-                            )
-                        }
-                        composable(Route.Subscriptions.path) {
-                            SubscriptionsScreen(
-                                subscriptions = state.subscriptions,
-                                onRefresh = vm::refreshSubscription,
-                                onDelete = vm::deleteSubscription,
-                                onRename = vm::renameSubscription,
-                                onUpdate = vm::updateSubscription
                             )
                         }
                         composable(

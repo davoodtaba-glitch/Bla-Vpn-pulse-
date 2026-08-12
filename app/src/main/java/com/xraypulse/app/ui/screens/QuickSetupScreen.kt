@@ -64,7 +64,6 @@ private enum class QsStep {
     DONE,
     ERROR,
     HELP_COLOR,
-    HELP_LIMITS,
     HELP_LANGUAGE,
     HELP_SETTINGS
 }
@@ -74,7 +73,6 @@ fun QuickSetupScreen(
     busy: Boolean = false,
     onBack: () -> Unit,
     onOpenSettingsAppearance: () -> Unit,
-    onOpenSettingsLimits: () -> Unit,
     onOpenSettingsLanguage: () -> Unit,
     onOpenFullSettings: () -> Unit,
     onImportAndConnect: (
@@ -111,8 +109,7 @@ fun QuickSetupScreen(
                     QsStep.HAVE_COPIED, QsStep.COPY_HINT -> step = QsStep.HAVE_CONFIG
                     QsStep.PASTE -> step = QsStep.HAVE_COPIED
                     QsStep.DONE, QsStep.ERROR -> step = QsStep.WHAT
-                    QsStep.HELP_COLOR, QsStep.HELP_LIMITS,
-                    QsStep.HELP_LANGUAGE, QsStep.HELP_SETTINGS -> step = QsStep.WHAT
+                    QsStep.HELP_COLOR, QsStep.HELP_LANGUAGE, QsStep.HELP_SETTINGS -> step = QsStep.WHAT
                 }
             }) {
                 Icon(Icons.Rounded.ArrowBack, contentDescription = t("qs_back"), tint = p.text)
@@ -137,9 +134,6 @@ fun QuickSetupScreen(
                 QsOption(Icons.Rounded.Palette, t("qs_color")) {
                     step = QsStep.HELP_COLOR
                 }
-                QsOption(Icons.Rounded.Timer, t("qs_limits")) {
-                    step = QsStep.HELP_LIMITS
-                }
                 QsOption(Icons.Rounded.Language, t("qs_language")) {
                     step = QsStep.HELP_LANGUAGE
                 }
@@ -152,11 +146,6 @@ fun QuickSetupScreen(
                 title = t("qs_help_color_title"),
                 body = t("qs_help_color_body"),
                 onContinue = onOpenSettingsAppearance
-            )
-            QsStep.HELP_LIMITS -> QsHelpCard(
-                title = t("qs_help_limits_title"),
-                body = t("qs_help_limits_body"),
-                onContinue = onOpenSettingsLimits
             )
             QsStep.HELP_LANGUAGE -> QsHelpCard(
                 title = t("qs_help_language_title"),

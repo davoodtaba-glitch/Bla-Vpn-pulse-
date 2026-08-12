@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.xraypulse.app.data.model.Subscription
 import com.xraypulse.app.ui.components.GlassCard
 import com.xraypulse.app.ui.components.NeonIcon
+import com.xraypulse.app.ui.components.ltrWrap
 import com.xraypulse.app.ui.i18n.t
 import com.xraypulse.app.ui.theme.LocalAccent
 import com.xraypulse.app.ui.theme.LocalPalette
@@ -94,7 +95,7 @@ fun SubscriptionsScreen(
                                     Text(sub.url, color = p.muted, fontSize = 12.sp, maxLines = 1)
                                     Spacer(Modifier.height(4.dp))
                                     Text(
-                                        "${sub.serverCount} ${t("servers")} · ${formatTime(sub.lastUpdated)}",
+                                        "${sub.serverCount} ${t("servers")} · ${formatTime(sub.lastUpdated)}".ltrWrap(),
                                         color = p.muted,
                                         fontSize = 11.sp
                                     )

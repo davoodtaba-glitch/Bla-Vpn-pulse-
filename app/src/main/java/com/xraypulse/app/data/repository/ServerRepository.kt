@@ -113,6 +113,12 @@ class ServerRepository(context: Context) {
 
     suspend fun refreshSubscription(id: Long): Int = withContext(Dispatchers.IO) {
         val sub = subDao.getById(id) ?: return@withContext 0
+        // Remember active config so we can keep selection after merge
+        val previousSelected = serverDao.getSelected()
+        val keepKey = previousSelected
+            ?.takeIf { it.subscriptionId == id }
+            ?.let { profileMatchKey(it) }
+
         val req = Request.Builder()
             .url(sub.url)
             .header("User-Agent", sub.userAgent)
@@ -128,22 +134,84 @@ class ServerRepository(context: Context) {
             text to infoHeader
         }
         val info = parseSubscriptionUserInfo(userInfo, body)
-        val profiles = ShareLinkParser.parseMulti(body).map {
-            it.copy(subscriptionId = id, updatedAt = System.currentTimeMillis())
+        val now = System.currentTimeMillis()
+        val incoming = ShareLinkParser.parseMulti(body).map {
+            it.copy(subscriptionId = id, updatedAt = now)
         }
-        serverDao.deleteBySubscription(id)
-        if (profiles.isNotEmpty()) serverDao.insertAll(profiles)
+
+        // Merge by stable endpoint identity: update in place (keep id / selection / latency),
+        // insert new, delete removed — avoids wiping active server to "none".
+        val existing = serverDao.getBySubscription(id)
+        val existingByKey = existing.groupBy { profileMatchKey(it) }
+            .mapValues { (_, list) -> list.toMutableList() }
+        val retainedIds = mutableSetOf<Long>()
+        var keptSelectedId: Long? = null
+
+        for (profile in incoming) {
+            val key = profileMatchKey(profile)
+            val old = existingByKey[key]?.removeFirstOrNull()
+            if (old != null) {
+                val updated = profile.copy(
+                    id = old.id,
+                    isSelected = old.isSelected,
+                    latencyMs = old.latencyMs,
+                    createdAt = old.createdAt,
+                    uploadBytes = old.uploadBytes,
+                    downloadBytes = old.downloadBytes,
+                    updatedAt = now
+                )
+                serverDao.update(updated)
+                retainedIds += old.id
+                if (keepKey != null && key == keepKey) {
+                    keptSelectedId = old.id
+                }
+            } else {
+                val newId = serverDao.insert(profile)
+                retainedIds += newId
+                if (keepKey != null && key == keepKey) {
+                    keptSelectedId = newId
+                }
+            }
+        }
+
+        // Remove servers no longer present (or duplicate leftovers)
+        existing.forEach { old ->
+            if (old.id !in retainedIds) {
+                serverDao.delete(old.id)
+            }
+        }
+
+        // Ensure previously active endpoint stays selected (id preserved via merge)
+        if (keepKey != null && keptSelectedId != null) {
+            serverDao.select(keptSelectedId)
+        }
+
         subDao.update(
             sub.copy(
-                lastUpdated = System.currentTimeMillis(),
-                serverCount = profiles.size,
+                lastUpdated = now,
+                serverCount = incoming.size,
                 usedUpload = info.upload,
                 usedDownload = info.download,
                 totalTraffic = info.total,
                 expireAt = info.expire
             )
         )
-        profiles.size
+        incoming.size
+    }
+
+    /**
+     * Stable endpoint identity for merge / re-select after subscription refresh.
+     * Does not use full shareLink or remark (those change often between provider updates).
+     */
+    private fun profileMatchKey(p: ServerProfile): String {
+        return listOf(
+            p.protocol.name,
+            p.address.trim().lowercase(),
+            p.port.toString(),
+            p.uuid.trim().lowercase(),
+            p.password.trim(),
+            p.network.name
+        ).joinToString("|")
     }
 
     /**

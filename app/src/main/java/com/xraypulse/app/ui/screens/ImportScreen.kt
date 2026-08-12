@@ -193,7 +193,7 @@ fun ImportScreen(
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(14.dp)
         ) {
-            Text(t("manage_subscriptions"))
+            Text(t("subscriptions"))
         }
 
         Spacer(Modifier.height(24.dp))

@@ -66,6 +66,9 @@ interface ServerDao {
     @Query("DELETE FROM servers WHERE subscriptionId = :subId")
     suspend fun deleteBySubscription(subId: Long)
 
+    @Query("SELECT * FROM servers WHERE subscriptionId = :subId")
+    suspend fun getBySubscription(subId: Long): List<ServerProfile>
+
     @Query("UPDATE servers SET latencyMs = :latency WHERE id = :id")
     suspend fun updateLatency(id: Long, latency: Long)
 

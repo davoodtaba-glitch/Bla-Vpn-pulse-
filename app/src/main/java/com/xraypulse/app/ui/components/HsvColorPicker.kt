@@ -36,15 +36,18 @@ import com.xraypulse.app.ui.theme.toComposeColor
 
 /**
  * Friendly HSV color chooser:
- * - large SV panel (saturation × value) for current hue
+ * - SV panel (saturation × value) for current hue
  * - hue bar under it
  * Theme is applied only when the finger is released (no scroll/crash thrash).
+ *
+ * @param compact smaller panel for Settings (shown only for custom color).
  */
 @Composable
 fun HsvColorPicker(
     colorArgb: Long,
     onCommit: (Long) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
 ) {
     val p = LocalPalette.current
     val seed = remember(colorArgb) { colorArgb.toComposeColor() }
@@ -64,14 +67,26 @@ fun HsvColorPicker(
 
     fun currentArgb(): Long = hsvToColor(hue, sat.coerceIn(0f, 1f), value.coerceIn(0f, 1f)).toArgbLong()
 
+    val panelMod = if (compact) {
+        Modifier
+            .fillMaxWidth()
+            .height(96.dp)
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .aspectRatio(1.15f)
+    }
+    val corner = if (compact) 12.dp else 16.dp
+    val handleR = if (compact) 9.dp else 14.dp
+    val hueH = if (compact) 18.dp else 28.dp
+    val hueHandle = if (compact) 7.dp else 11.dp
+
     Column(modifier = modifier) {
         // SV panel
         Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(1.15f)
-                .clip(RoundedCornerShape(16.dp))
-                .border(1.dp, p.border.copy(0.5f), RoundedCornerShape(16.dp))
+            panelMod
+                .clip(RoundedCornerShape(corner))
+                .border(1.dp, p.border.copy(0.5f), RoundedCornerShape(corner))
         ) {
             Canvas(
                 Modifier
@@ -118,28 +133,28 @@ fun HsvColorPicker(
                 val cy = (1f - value) * size.height
                 drawCircle(
                     color = Color.White,
-                    radius = 14.dp.toPx(),
+                    radius = handleR.toPx(),
                     center = Offset(cx, cy),
-                    style = Stroke(width = 3.dp.toPx())
+                    style = Stroke(width = 2.5.dp.toPx())
                 )
                 drawCircle(
                     color = Color.Black.copy(0.35f),
-                    radius = 16.dp.toPx(),
+                    radius = handleR.toPx() + 2.dp.toPx(),
                     center = Offset(cx, cy),
                     style = Stroke(width = 1.dp.toPx())
                 )
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
 
         // Hue bar
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(28.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .border(1.dp, p.border.copy(0.5f), RoundedCornerShape(14.dp))
+                .height(hueH)
+                .clip(RoundedCornerShape(if (compact) 9.dp else 14.dp))
+                .border(1.dp, p.border.copy(0.5f), RoundedCornerShape(if (compact) 9.dp else 14.dp))
         ) {
             Canvas(
                 Modifier
@@ -178,21 +193,24 @@ fun HsvColorPicker(
                 val cx = (hue / 360f).coerceIn(0f, 1f) * size.width
                 drawCircle(
                     color = Color.White,
-                    radius = 11.dp.toPx(),
+                    radius = hueHandle.toPx(),
                     center = Offset(cx, size.height / 2f),
-                    style = Stroke(width = 3.dp.toPx())
+                    style = Stroke(width = 2.5.dp.toPx())
                 )
             }
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(if (compact) 6.dp else 10.dp))
         // Preview chip
         Box(
             Modifier
-                .size(width = 56.dp, height = 28.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .size(
+                    width = if (compact) 40.dp else 56.dp,
+                    height = if (compact) 20.dp else 28.dp
+                )
+                .clip(RoundedCornerShape(if (compact) 6.dp else 8.dp))
                 .background(hsvToColor(hue, sat, value))
-                .border(1.dp, p.border, RoundedCornerShape(8.dp))
+                .border(1.dp, p.border, RoundedCornerShape(if (compact) 6.dp else 8.dp))
         )
     }
 }

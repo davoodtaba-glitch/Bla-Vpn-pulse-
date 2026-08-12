@@ -104,11 +104,13 @@ object XrayConfigBuilder {
         val root = JsonObject()
         root.add("log", buildLog(settings))
         root.add("dns", buildDns(settings))
-        // FakeDNS is required for Android full-tunnel when Vision (no UDP) is used
-        root.add("fakedns", JsonObject().apply {
-            addProperty("ipPool", "198.18.0.0/15")
-            addProperty("poolSize", 65535)
-        })
+        // FakeDNS only if user enabled it OR VPN interface has no real DNS IP (DoH-hostname-only)
+        if (settings.useFakeDns || vpnDnsIps(settings).any { it.startsWith("198.18.") }) {
+            root.add("fakedns", JsonObject().apply {
+                addProperty("ipPool", "198.18.0.0/15")
+                addProperty("poolSize", 65535)
+            })
+        }
         root.add("inbounds", buildInbounds(settings))
         root.add("outbounds", buildOutbounds(profile, settings))
         root.add("routing", buildRouting(settings))
@@ -121,33 +123,177 @@ object XrayConfigBuilder {
         addProperty("loglevel", settings.logLevel)
     }
 
+    // ─── Authoritative user DNS ─────────────────────────────────────────────
+
     /**
-     * FakeDNS first so apps get 198.18.x.x addresses; Xray recovers real domains via SNI sniffing.
-     * Upstream DoH uses +local so Xray resolves DNS outside the tunnel (process excluded from VPN).
+     * Exact list of DNS entries the user configured (main, then alternative).
+     * Supports comma/newline-separated multi-values in either field.
+     * Never invents extra resolvers (no auto secondary pair).
+     * Only if both fields are empty → single default `1.1.1.1` so the VPN can start.
+     */
+    fun parseUserDnsEntries(settings: AppSettings): List<String> {
+        fun splitField(raw: String): List<String> =
+            raw.split(',', '\n', ';', ' ')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.equals("localhost", ignoreCase = true) }
+
+        val list = (splitField(settings.dnsRemote) + splitField(settings.dnsDomestic))
+            .distinctBy { it.lowercase() }
+        return list.ifEmpty { listOf("1.1.1.1") }
+    }
+
+    /**
+     * IPv4 addresses pushed to [android.net.VpnService.Builder.addDnsServer].
+     * Only IPs derived from the user's list — no auto-added Cloudflare/Google secondary.
+     * If user only gave DoH hostnames with no IP, falls back to FakeDNS sink `198.18.0.2`.
+     */
+    fun vpnDnsIps(settings: AppSettings): List<String> {
+        val ips = parseUserDnsEntries(settings).mapNotNull { extractDnsIp(it) }.distinct()
+        return ips.ifEmpty { listOf("198.18.0.2") }
+    }
+
+    /** @deprecated use [vpnDnsIps] — kept for call sites expecting a pair. */
+    fun vpnDnsServers(settings: AppSettings): Pair<String, String> {
+        val ips = vpnDnsIps(settings)
+        val a = ips.first()
+        val b = ips.getOrNull(1) ?: a
+        return a to b
+    }
+
+    /**
+     * Extract IPv4 from a user DNS string (bare IP, host:port, or URL).
+     */
+    fun extractDnsIp(raw: String): String? {
+        val s = raw.trim()
+        if (s.isEmpty()) return null
+        val host = when {
+            "://" in s -> {
+                val after = s.substringAfter("://").substringBefore("/").substringBefore("?")
+                // strip userinfo if any
+                val hostPort = after.substringAfter("@")
+                hostPort.substringBefore("]") .removePrefix("[").substringBefore(":")
+                    .ifEmpty { hostPort.removePrefix("[").substringBefore("]") }
+            }
+            s.count { it == ':' } == 1 -> s.substringBefore(":")
+            else -> s
+        }.trim().removePrefix("[").removeSuffix("]")
+        return if (IPV4.matches(host)) host else null
+    }
+
+    private val IPV4 = Regex("""^(?:\d{1,3}\.){3}\d{1,3}$""")
+
+    /**
+     * Normalize one user DNS entry for Xray DNS module.
+     *
+     * Default: resolve **through the proxy** (no `+local`). On many mobile/censored
+     * networks, direct DoH/UDP from the device is blocked while the VLESS tunnel works —
+     * that produces "DNS error" for browsers while Telegram/Instagram still open.
+     *
+     * Explicit `+local` schemes are kept if the user types them.
+     * Only the user's configured server(s) are used (never invent Google/system fallbacks).
+     */
+    internal fun normalizeDnsServer(raw: String): String {
+        val s = raw.trim()
+        if (s.isEmpty()) return "https://1.1.1.1/dns-query"
+
+        val lower = s.lowercase()
+
+        // User explicitly asked for process-local DNS — honor it
+        if (lower.contains("+local://")) return s
+
+        // Explicit schemes: keep through-proxy (strip accidental double schemes only)
+        when {
+            lower.startsWith("https://") ||
+                lower.startsWith("http://") ||
+                lower.startsWith("udp://") ||
+                lower.startsWith("tcp://") ||
+                lower.startsWith("quic://") -> return s
+        }
+
+        // bare IP or host:port
+        val hostPort = s.removePrefix("[").removeSuffix("]")
+        val host: String
+        val port: Int
+        if (hostPort.count { it == ':' } == 1) {
+            val parts = hostPort.split(':', limit = 2)
+            host = parts[0].trim()
+            port = parts[1].trim().toIntOrNull()?.coerceIn(1, 65535) ?: 53
+        } else {
+            host = hostPort.trim()
+            port = 53
+        }
+        if (host.isEmpty()) return "https://1.1.1.1/dns-query"
+
+        // Plain IP → DoH to that IP **via the proxy tunnel** (not +local).
+        // DoH over TCP/443 survives UDP-blocked mobile proxies better than raw :53.
+        if (IPV4.matches(host)) {
+            return if (port == 53) "https://$host/dns-query"
+            else "tcp://$host:$port"
+        }
+        return "https://$host/dns-query"
+    }
+
+    /**
+     * Xray DNS block: **only** user-configured servers.
+     * disableFallback prevents Android/system/ISP/Google silent fallbacks.
+     * domainStrategy IPIfNonMatch (routing) makes Xray resolve domains itself via this block.
      */
     private fun buildDns(settings: AppSettings) = JsonObject().apply {
-        add("hosts", JsonObject().apply {
-            // Keep DoH endpoints resolvable without recursion
-            addProperty("cloudflare-dns.com", "1.1.1.1")
-            addProperty("dns.google", "8.8.8.8")
-            addProperty("dns.cloudflare.com", "1.1.1.1")
-        })
-        val servers = JsonArray()
-        // FakeDNS: critical for full-tunnel Android + VLESS Vision (UDP often broken)
-        servers.add("fakedns")
-        // Prefer DoH over the process network (not through TUN)
-        val remote = settings.dnsRemote.ifBlank { "https://1.1.1.1/dns-query" }
-        val doh = if (remote.startsWith("https://") && !remote.contains("+local")) {
-            remote.replace("https://", "https+local://")
-        } else if (remote.startsWith("https+local://") || remote.startsWith("https://")) {
-            remote
-        } else {
-            "https+local://1.1.1.1/dns-query"
+        val entries = parseUserDnsEntries(settings)
+        // hosts: bootstrap only hostnames that appear in the user's own DoH URLs
+        val hosts = JsonObject()
+        for (e in entries) {
+            val lower = e.lowercase()
+            if ("://" in lower && !IPV4.matches(extractDnsIp(e) ?: "")) {
+                // no hardcoded google/cloudflare injection
+            }
+            // If user uses known DoH hostname, pin IP so bootstrap does not need system DNS
+            when {
+                "dns.google" in lower -> hosts.addProperty("dns.google", "8.8.8.8")
+                "cloudflare-dns.com" in lower || "one.one.one.one" in lower -> {
+                    hosts.addProperty("cloudflare-dns.com", "1.1.1.1")
+                    hosts.addProperty("one.one.one.one", "1.1.1.1")
+                    hosts.addProperty("dns.cloudflare.com", "1.1.1.1")
+                }
+                "dns.quad9.net" in lower -> hosts.addProperty("dns.quad9.net", "9.9.9.9")
+            }
         }
-        servers.add(doh)
+        if (hosts.size() > 0) add("hosts", hosts)
+
+        val servers = JsonArray()
+        val needFake = settings.useFakeDns || vpnDnsIps(settings).any { it.startsWith("198.18.") }
+        if (needFake) servers.add("fakedns")
+
+        entries.forEachIndexed { index, raw ->
+            servers.add(JsonObject().apply {
+                addProperty("address", normalizeDnsServer(raw))
+                // Later user servers may act as fallback for earlier ones (still user-owned only)
+                addProperty("skipFallback", false)
+            })
+        }
         add("servers", servers)
         addProperty("queryStrategy", "UseIPv4")
+        // Never fall back outside the configured server list (no system/ISP/Google).
+        // Multiple user servers in [servers] may still be tried among themselves.
+        addProperty("disableFallback", true)
         addProperty("disableFallbackIfMatch", true)
+        addProperty("tag", "dns")
+    }
+
+    /**
+     * Snapshot of effective DNS for logs / tests.
+     * Call after settings change to verify no extra resolvers were injected.
+     */
+    fun describeDnsConfig(settings: AppSettings): String {
+        val entries = parseUserDnsEntries(settings)
+        val ips = vpnDnsIps(settings)
+        val xray = entries.map { normalizeDnsServer(it) }
+        return buildString {
+            appendLine("userEntries=$entries")
+            appendLine("vpnInterfaceDns=$ips")
+            appendLine("xrayDnsServers=$xray")
+            appendLine("disableFallback=true mode=user-dns-only+DoH-via-proxy")
+        }
     }
 
     private fun buildInbounds(settings: AppSettings): JsonArray {
@@ -175,14 +321,15 @@ object XrayConfigBuilder {
             })
             add("sniffing", sniffing(settings))
         })
-        // Local DNS door — VPN points DNS here so queries never depend on UDP-through-proxy
+        // Local DNS door — apps/system DNS IPs land here via port-53 hijack to dns-out
+        val dnsTarget = vpnDnsIps(settings).first()
         arr.add(JsonObject().apply {
             addProperty("tag", "dns-in")
             addProperty("port", 10853)
             addProperty("listen", "127.0.0.1")
             addProperty("protocol", "dokodemo-door")
             add("settings", JsonObject().apply {
-                addProperty("address", "1.1.1.1")
+                addProperty("address", dnsTarget)
                 addProperty("port", 53)
                 addProperty("network", "tcp,udp")
                 addProperty("followRedirect", false)
@@ -192,14 +339,13 @@ object XrayConfigBuilder {
     }
 
     private fun sniffing(settings: AppSettings) = JsonObject().apply {
-        addProperty("enabled", settings.enableSniffing)
+        addProperty("enabled", settings.enableSniffing || settings.useFakeDns)
         add("destOverride", JsonArray().apply {
             add("http")
             add("tls")
             add("quic")
-            add("fakedns")
+            if (settings.useFakeDns) add("fakedns")
         })
-        // false = override destination with sniffed domain (required for FakeDNS)
         addProperty("routeOnly", false)
         addProperty("metadataOnly", false)
     }
@@ -542,15 +688,19 @@ object XrayConfigBuilder {
 
     private fun buildRouting(settings: AppSettings): JsonObject {
         val routing = JsonObject()
-        // IPIfNonMatch helps when FakeDNS + sniffing rewrites destinations
-        routing.addProperty(
-            "domainStrategy",
-            if (settings.domainStrategy == "AsIs") "AsIs" else settings.domainStrategy
-        )
+        // Force Xray to resolve domains via its DNS module (user servers only).
+        // AsIs would hand bare domains to the remote proxy (remote often uses Google DNS).
+        val strategy = when (settings.domainStrategy) {
+            "IPOnDemand" -> "IPOnDemand"
+            else -> "IPIfNonMatch"
+        }
+        routing.addProperty("domainStrategy", strategy)
         routing.addProperty("domainMatcher", "hybrid")
         val rules = JsonArray()
 
-        // 1) DNS traffic → dns-out (handles FakeDNS + DoH)
+        val userIps = vpnDnsIps(settings).filter { !it.startsWith("198.18.") }.toSet()
+
+        // 1) All DNS path → dns-out (Xray DNS module → user servers only, through proxy)
         rules.add(JsonObject().apply {
             addProperty("type", "field")
             add("inboundTag", JsonArray().apply { add("dns-in") })
@@ -558,20 +708,60 @@ object XrayConfigBuilder {
         })
         rules.add(JsonObject().apply {
             addProperty("type", "field")
-            addProperty("port", "53")
+            addProperty("port", "53,853")
             addProperty("outboundTag", "dns-out")
         })
 
-        // 2) Block QUIC (UDP/443) so browsers fall back to stable TCP HTTPS
-        //    Broken QUIC through proxy is a common ERR_CONNECTION_CLOSED cause
+        // 2) Known public resolvers the user did NOT configure → block DNS ports only.
+        //    (Do not block all 443 to those IPs — can break unrelated HTTPS.)
+        val publicDnsBlock = listOf(
+            "8.8.8.8", "8.8.4.4",
+            "1.1.1.1", "1.0.0.1",
+            "9.9.9.9", "149.112.112.112",
+            "208.67.222.222", "208.67.220.220",
+            "94.140.14.14", "94.140.15.15",
+            "76.76.2.0", "76.76.10.0",
+            "185.228.168.9", "185.228.169.9",
+            "64.6.64.6", "64.6.65.6"
+        ).filter { it !in userIps }
+        if (publicDnsBlock.isNotEmpty()) {
+            rules.add(JsonObject().apply {
+                addProperty("type", "field")
+                add("ip", JsonArray().apply { publicDnsBlock.forEach { add(it) } })
+                addProperty("port", "53,853")
+                addProperty("outboundTag", "block")
+            })
+        }
+
+        // 3) Block DoH hostnames (browser Secure DNS) — Xray uses IP literals for user DNS
+        rules.add(JsonObject().apply {
+            addProperty("type", "field")
+            add("domain", JsonArray().apply {
+                add("domain:dns.google")
+                add("full:dns.google")
+                add("domain:dns.google.com")
+                add("full:dns.google.com")
+                add("domain:cloudflare-dns.com")
+                add("domain:mozilla.cloudflare-dns.com")
+                add("domain:chrome.cloudflare-dns.com")
+                add("domain:dns.quad9.net")
+                add("domain:doh.opendns.com")
+                add("domain:doh.cleanbrowsing.org")
+                add("domain:dns.adguard.com")
+                add("domain:dns.adguard-dns.com")
+            })
+            addProperty("outboundTag", "block")
+        })
+
+        // 4) QUIC (UDP/443) via proxy — do NOT blackhole (blackhole broke some stacks entirely)
         rules.add(JsonObject().apply {
             addProperty("type", "field")
             addProperty("network", "udp")
             addProperty("port", "443")
-            addProperty("outboundTag", "block")
+            addProperty("outboundTag", "proxy")
         })
 
-        // 3) Private LAN (do not send LAN through proxy) — exclude FakeDNS pool
+        // 5) Private LAN direct
         rules.add(rule(ip = listOf(
             "0.0.0.0/8",
             "10.0.0.0/8",
@@ -583,16 +773,12 @@ object XrayConfigBuilder {
             "255.255.255.255/32"
         ), outbound = "direct"))
         rules.add(rule(domain = listOf("geosite:private"), outbound = "direct"))
-        rules.add(rule(domain = listOf("geosite:category-ads-all"), outbound = "block"))
 
-        // User bypass domains → direct (support wildcards like *.example.com*)
         val bypass = parseBypassDomainPatterns(settings.bypassDomains)
         if (bypass.isNotEmpty()) {
             rules.add(rule(domain = bypass, outbound = "direct"))
         }
 
-        // GLOBAL and BYPASS_LAN share private-LAN direct rules above.
-        // BYPASS_LAN is the default friendly mode; GLOBAL does not add extra CN rules.
         routing.add("rules", rules)
         return routing
     }

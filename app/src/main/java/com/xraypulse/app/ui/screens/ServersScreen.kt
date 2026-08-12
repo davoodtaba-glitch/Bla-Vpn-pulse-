@@ -20,7 +20,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.NetworkCheck
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SelectAll
 import androidx.compose.material.icons.rounded.Sort
@@ -38,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xraypulse.app.data.model.ServerProfile
 import com.xraypulse.app.data.model.Subscription
+import com.xraypulse.app.ui.components.GlassCard
 import com.xraypulse.app.ui.components.NeonIcon
 import com.xraypulse.app.ui.components.ServerListItem
 import com.xraypulse.app.ui.i18n.t
@@ -81,7 +85,12 @@ fun ServersScreen(
     onTestAll: () -> Unit,
     onTestOne: (ServerProfile) -> Unit,
     onEdit: (Long) -> Unit,
-    onSortByDelay: (Boolean) -> Unit
+    onSortByDelay: (Boolean) -> Unit,
+    onCancelTesting: () -> Unit = {},
+    onRefreshSubscription: (Long) -> Unit = {},
+    onDeleteSubscription: (Long) -> Unit = {},
+    onRenameSubscription: (Long, String) -> Unit = { _, _ -> },
+    onUpdateSubscription: (Long, String, String) -> Unit = { _, _, _ -> }
 ) {
     val accent = LocalAccent.current
     val p = LocalPalette.current
@@ -90,6 +99,15 @@ fun ServersScreen(
     var multiSelect by remember { mutableStateOf(false) }
     var checked by remember { mutableStateOf(setOf<Long>()) }
     var tab by remember { mutableStateOf<ServerTab>(ServerTab.All) }
+    var editSub by remember { mutableStateOf<Subscription?>(null) }
+    var editName by remember { mutableStateOf("") }
+    var editUrl by remember { mutableStateOf("") }
+    var confirmDeleteSub by remember { mutableStateOf<Subscription?>(null) }
+
+    // Stop ping tests when leaving this screen
+    DisposableEffect(Unit) {
+        onDispose { onCancelTesting() }
+    }
 
     val tabs = remember(subscriptions) {
         buildList {
@@ -131,7 +149,7 @@ fun ServersScreen(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    if (multiSelect) t("select_servers") else t("servers_title"),
+                    if (multiSelect) t("select_servers") else t("subscriptions"),
                     color = p.text,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold
@@ -232,6 +250,51 @@ fun ServersScreen(
                         labelColor = p.text
                     )
                 )
+            }
+        }
+
+        // Management actions for selected subscription
+        val selectedSub = (activeTab as? ServerTab.Sub)?.let { st ->
+            subscriptions.find { it.id == st.id }
+        }
+        if (selectedSub != null) {
+            Spacer(Modifier.height(10.dp))
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        selectedSub.name.ifBlank { t("subscription") },
+                        color = accent,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        IconButton(onClick = { onRefreshSubscription(selectedSub.id) }) {
+                            NeonIcon(Icons.Rounded.Refresh, t("update_subscription"), size = 22.dp)
+                        }
+                        IconButton(onClick = {
+                            editSub = selectedSub
+                            editName = selectedSub.name
+                            editUrl = selectedSub.url
+                        }) {
+                            NeonIcon(Icons.Rounded.Edit, t("edit_subscription"), size = 22.dp)
+                        }
+                        IconButton(onClick = { confirmDeleteSub = selectedSub }) {
+                            NeonIcon(Icons.Rounded.Delete, t("delete"), tintOverride = p.error, size = 22.dp)
+                        }
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Text(t("update_subscription"), color = p.muted, fontSize = 11.sp)
+                        Text(t("edit_subscription"), color = p.muted, fontSize = 11.sp)
+                        Text(t("delete"), color = p.muted, fontSize = 11.sp)
+                    }
+                }
             }
         }
 
@@ -383,6 +446,61 @@ fun ServersScreen(
             }
         )
     }
+    if (confirmDeleteSub != null) {
+        val sub = confirmDeleteSub!!
+        AlertDialog(
+            onDismissRequest = { confirmDeleteSub = null },
+            title = { Text(t("delete")) },
+            text = { Text(sub.name) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteSubscription(sub.id)
+                    confirmDeleteSub = null
+                    tab = ServerTab.All
+                }) { Text(t("delete"), color = p.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteSub = null }) { Text(t("cancel")) }
+            }
+        )
+    }
+
+    if (editSub != null) {
+        AlertDialog(
+            onDismissRequest = { editSub = null },
+            title = { Text(t("edit_subscription")) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text(t("name")) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = editUrl,
+                        onValueChange = { editUrl = it },
+                        label = { Text(t("subscription_url")) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val s = editSub!!
+                    onUpdateSubscription(s.id, editName, editUrl)
+                    editSub = null
+                }) { Text(t("update_subscription")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { editSub = null }) { Text(t("cancel")) }
+            }
+        )
+    }
+
     if (confirmDeleteSelected) {
         AlertDialog(
             onDismissRequest = { confirmDeleteSelected = false },

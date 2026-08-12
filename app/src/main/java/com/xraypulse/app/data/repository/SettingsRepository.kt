@@ -41,16 +41,16 @@ class SettingsRepository(private val context: Context) {
         val fragmentInterval = stringPreferencesKey("fragment_interval")
         val fragmentMaxSplit = stringPreferencesKey("fragment_max_split")
         val accentColor = stringPreferencesKey("accent_color")
+        val accentColorSecondary = stringPreferencesKey("accent_color_secondary")
         val sortByDelay = booleanPreferencesKey("sort_by_delay")
-        val sessionTimeLimitMinutes = intPreferencesKey("session_time_limit_min")
-        val sessionTrafficLimitMb = intPreferencesKey("session_traffic_limit_mb")
         val themeStyle = stringPreferencesKey("theme_style")
         val language = stringPreferencesKey("language")
-        val limitActionOnReach = stringPreferencesKey("limit_action_on_reach")
         val keepAliveEnabled = booleanPreferencesKey("keep_alive_enabled")
         val keepAliveIntervalMinutes = intPreferencesKey("keep_alive_interval_min")
         val bypassDomains = stringPreferencesKey("bypass_domains")
         val allowLanProxy = booleanPreferencesKey("allow_lan_proxy")
+        val mtu = intPreferencesKey("mtu")
+        val useFakeDns = booleanPreferencesKey("use_fake_dns")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -77,8 +77,9 @@ class SettingsRepository(private val context: Context) {
             autoConnect = p[Keys.autoConnect] ?: false,
             darkTheme = p[Keys.darkTheme] ?: true,
             testUrl = p[Keys.testUrl] ?: "https://www.gstatic.com/generate_204",
-            dnsRemote = p[Keys.dnsRemote] ?: "https://1.1.1.1/dns-query",
-            dnsDomestic = p[Keys.dnsDomestic] ?: "localhost",
+            dnsRemote = p[Keys.dnsRemote] ?: "1.1.1.1",
+            // Empty alt = single DNS only (do not invent a second resolver)
+            dnsDomestic = p[Keys.dnsDomestic] ?: "",
             fragmentEnabled = p[Keys.fragment] ?: false,
             fragmentPackets = p[Keys.fragmentPackets] ?: "tlshello",
             fragmentLength = p[Keys.fragmentLength] ?: "12-23",
@@ -88,18 +89,22 @@ class SettingsRepository(private val context: Context) {
                 hex.removePrefix("0x").removePrefix("0X").toLongOrNull(16)?.let { v ->
                     if (v <= 0xFFFFFFL) v or 0xFF000000L else v
                 }
-            } ?: 0xFF00E5C3,
+            } ?: 0xFF00C8FF,
+            accentColorSecondary = p[Keys.accentColorSecondary]?.let { hex ->
+                hex.removePrefix("0x").removePrefix("0X").toLongOrNull(16)?.let { v ->
+                    if (v <= 0xFFFFFFL) v or 0xFF000000L else v
+                }
+            } ?: 0xFFFF2D6A,
             sortByDelay = p[Keys.sortByDelay] ?: false,
-            sessionTimeLimitMinutes = p[Keys.sessionTimeLimitMinutes] ?: 60,
-            sessionTrafficLimitMb = p[Keys.sessionTrafficLimitMb] ?: 512,
-            limitActionOnReach = p[Keys.limitActionOnReach] ?: "notify",
             keepAliveEnabled = p[Keys.keepAliveEnabled] ?: true,
             keepAliveIntervalMinutes = (p[Keys.keepAliveIntervalMinutes] ?: 1).coerceIn(1, 120),
             bypassDomains = p[Keys.bypassDomains] ?: "",
             allowLanProxy = p[Keys.allowLanProxy] ?: false,
             // Classic Pulse is the only supported UI theme
             themeStyle = "PULSE",
-            language = p[Keys.language] ?: "fa"
+            language = p[Keys.language] ?: "fa",
+            mtu = (p[Keys.mtu] ?: 1500).coerceIn(1280, 1500),
+            useFakeDns = p[Keys.useFakeDns] ?: false
         )
     }
 
@@ -129,16 +134,16 @@ class SettingsRepository(private val context: Context) {
             p[Keys.fragmentInterval] = next.fragmentInterval
             p[Keys.fragmentMaxSplit] = next.fragmentMaxSplit
             p[Keys.accentColor] = next.accentColor.toString(16)
+            p[Keys.accentColorSecondary] = next.accentColorSecondary.toString(16)
             p[Keys.sortByDelay] = next.sortByDelay
-            p[Keys.sessionTimeLimitMinutes] = next.sessionTimeLimitMinutes
-            p[Keys.sessionTrafficLimitMb] = next.sessionTrafficLimitMb
-            p[Keys.limitActionOnReach] = next.limitActionOnReach
             p[Keys.keepAliveEnabled] = next.keepAliveEnabled
             p[Keys.keepAliveIntervalMinutes] = next.keepAliveIntervalMinutes.coerceIn(1, 120)
             p[Keys.bypassDomains] = next.bypassDomains
             p[Keys.allowLanProxy] = next.allowLanProxy
             p[Keys.themeStyle] = "PULSE"
             p[Keys.language] = next.language
+            p[Keys.mtu] = next.mtu.coerceIn(1280, 1500)
+            p[Keys.useFakeDns] = next.useFakeDns
         }
     }
 }

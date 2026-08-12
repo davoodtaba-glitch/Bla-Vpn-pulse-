@@ -8,14 +8,27 @@ android {
     namespace = "com.xraypulse.app"
     compileSdk = 35
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("../keystore/bla-vpn-release.jks")
+            storePassword = "blavpn123"
+            keyAlias = "blavpn"
+            keyPassword = "blavpn123"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.xraypulse.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.11"
+        versionCode = 43
+        versionName = "1.39"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+
+        // In-app updates from GitHub Releases
+        buildConfigField("String", "GITHUB_OWNER", "\"davoodtaba-glitch\"")
+        buildConfigField("String", "GITHUB_REPO", "\"Bla-Vpn-pulse-\"")
 
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
@@ -26,6 +39,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -99,4 +113,6 @@ dependencies {
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    testImplementation("junit:junit:4.13.2")
 }

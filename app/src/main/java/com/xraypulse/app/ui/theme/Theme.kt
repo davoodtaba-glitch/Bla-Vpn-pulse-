@@ -6,6 +6,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -15,11 +16,11 @@ import androidx.compose.ui.unit.sp
 
 /** App visual style. Cyberpunk is the default (main) theme. */
 enum class AppThemeStyle {
-    /** Neon cyberpunk — dark #090B10, cyan/blue glows (main). */
+    /** Neon cyberpunk â€” dark #090B10, cyan/blue glows (main). */
     CYBERPUNK,
     /** Original Pulse soft-space look (secondary). */
     PULSE,
-    /** RGB lighting — multi-color cycle like modern PC / device RGB. */
+    /** RGB lighting â€” multi-color cycle like modern PC / device RGB. */
     RGB
 }
 
@@ -40,7 +41,7 @@ data class AppPalette(
     val neonGlow: Color
 )
 
-// --- Cyberpunk (default / main) — vivid neon cyan/blue glass ---
+// --- Cyberpunk (default / main) â€” vivid neon cyan/blue glass ---
 val CyberpunkPalette = AppPalette(
     bg = Color(0xFF07090E),
     surface = Color(0xFF0B1018),
@@ -65,25 +66,32 @@ val NeonViolet = Color(0xFF9B6CFF)
 val NeonMint = Color(0xFF00FFC6)
 val NeonPink = Color(0xFFFF4D9A)
 
-// --- Classic Pulse (secondary) ---
+// --- Classic Pulse â€” premium deep navy glass (dashboard direction) ---
 val PulsePalette = AppPalette(
-    bg = Color(0xFF0B0F1A),
-    surface = Color(0xFF141A2A),
-    surface2 = Color(0xFF1C2438),
-    card = Color(0xFF1A2236),
-    border = Color(0xFF2A3550),
-    text = Color(0xFFF2F5FF),
-    muted = Color(0xFF8B95B0),
-    success = Color(0xFF3DFFB5),
+    bg = Color(0xFF070B16),
+    surface = Color(0xFF0E1526),
+    surface2 = Color(0xFF162033),
+    card = Color(0xCC121C30),
+    border = Color(0xFF2A3F66),
+    text = Color(0xFFF0F4FF),
+    muted = Color(0xFF8B9BB8),
+    success = Color(0xFF2EE6A6),
     warning = Color(0xFFFFC857),
-    error = Color(0xFFFF6B7A),
-    blue = Color(0xFF6C8CFF),
-    cyan = Color(0xFF00E5C3),
-    violet = Color(0xFF9B6CFF),
-    neonGlow = Color(0xFF00E5C3)
+    error = Color(0xFFFF4D6D),
+    blue = Color(0xFF3D9EFF),
+    cyan = Color(0xFF00D4FF),
+    violet = Color(0xFFB24BFF),
+    neonGlow = Color(0xFF00D4FF)
 )
 
-// --- RGB lighting (tertiary) — dark chassis + multicolor LED feel ---
+/** Soft background gradient stops for premium dashboard screens. */
+val PremiumBgTop = Color(0xFF0A1224)
+val PremiumBgMid = Color(0xFF070B16)
+val PremiumBgBottom = Color(0xFF050810)
+val PremiumMagenta = Color(0xFFFF2D6A)
+val PremiumElectric = Color(0xFF2B7BFF)
+
+// --- RGB lighting (tertiary) â€” dark chassis + multicolor LED feel ---
 val RgbPalette = AppPalette(
     bg = Color(0xFF050508),
     surface = Color(0xFF0C0C12),
@@ -116,6 +124,8 @@ val RgbLedCycle = listOf(
 
 val LocalPalette = staticCompositionLocalOf { CyberpunkPalette }
 val LocalAccent = staticCompositionLocalOf { CyberpunkPalette.cyan }
+/** Second user-chosen accent (power ring opposite side, nav active, accents). */
+val LocalAccentSecondary = staticCompositionLocalOf { Color(0xFFFF2D6A) }
 val LocalThemeStyle = staticCompositionLocalOf { AppThemeStyle.PULSE }
 
 // Back-compat aliases used across the app (defaults = cyberpunk)
@@ -234,21 +244,65 @@ private val AppTypography = Typography(
     labelMedium = TextStyle(fontWeight = FontWeight.Medium, fontSize = 12.sp)
 )
 
+/**
+ * Build a cohesive dark palette tinted by the user's two accent colors.
+ */
+fun paletteFromAccents(primary: Color, secondary: Color): AppPalette {
+    val hsl = primary.toHsl()
+    fun tone(l: Float, s: Float = 0.35f) =
+        hslToColor(hsl.h, s.coerceIn(0f, 0.55f), l.coerceIn(0.03f, 0.22f))
+    return PulsePalette.copy(
+        bg = tone(0.05f, 0.40f),
+        surface = tone(0.09f, 0.38f),
+        surface2 = tone(0.13f, 0.36f),
+        card = tone(0.11f, 0.34f).copy(alpha = 0.88f),
+        border = primary.copy(alpha = 0.45f).let {
+            // Mix toward secondary for a dual-tone glass edge
+            Color(
+                red = (primary.red * 0.55f + secondary.red * 0.25f + 0.08f).coerceIn(0f, 1f),
+                green = (primary.green * 0.55f + secondary.green * 0.25f + 0.10f).coerceIn(0f, 1f),
+                blue = (primary.blue * 0.55f + secondary.blue * 0.25f + 0.18f).coerceIn(0f, 1f),
+                alpha = 1f
+            )
+        },
+        cyan = primary,
+        blue = secondary.let { s ->
+            // Prefer a â€œblue-ishâ€ companion if secondary is warm
+            Color(
+                red = (primary.red * 0.35f + s.red * 0.2f).coerceIn(0f, 1f),
+                green = (primary.green * 0.45f + s.green * 0.25f + 0.15f).coerceIn(0f, 1f),
+                blue = (primary.blue * 0.55f + s.blue * 0.35f + 0.25f).coerceIn(0f, 1f)
+            )
+        },
+        violet = secondary,
+        neonGlow = primary,
+        success = Color(0xFF2EE6A6),
+        warning = Color(0xFFFFC857),
+        error = secondary.let { s ->
+            // Keep errors readable; bias toward secondary if it's reddish
+            if (s.red > s.blue && s.red > s.green) s else Color(0xFFFF4D6D)
+        }
+    )
+}
+
 @Composable
 fun XrayPulseTheme(
     darkTheme: Boolean = true,
     themeStyle: AppThemeStyle = AppThemeStyle.PULSE,
-    accentArgb: Long = 0xFF00E5C3,
+    accentArgb: Long = 0xFF00D4FF,
+    accentSecondaryArgb: Long = 0xFFFF2D6A,
     content: @Composable () -> Unit
 ) {
-    // Only Classic Pulse is active in the product UI
-    val palette = PulsePalette
-    val effectiveStyle = AppThemeStyle.PULSE
     val accent = accentArgb.toComposeColor()
+    val accent2 = accentSecondaryArgb.toComposeColor()
+    val palette = remember(accentArgb, accentSecondaryArgb) {
+        paletteFromAccents(accent, accent2)
+    }
+    val effectiveStyle = AppThemeStyle.PULSE
     val scheme = darkColorScheme(
         primary = accent,
         onPrimary = Color.Black,
-        secondary = palette.cyan,
+        secondary = accent2,
         background = palette.bg,
         onBackground = palette.text,
         surface = palette.surface,
@@ -262,6 +316,7 @@ fun XrayPulseTheme(
     CompositionLocalProvider(
         LocalPalette provides palette,
         LocalAccent provides accent,
+        LocalAccentSecondary provides accent2,
         LocalThemeStyle provides effectiveStyle
     ) {
         MaterialTheme(
